@@ -85,6 +85,7 @@ add_action( 'add_meta_boxes', function () {
         $date = get_post_meta( $post->ID, 'pne_sending_date', true );
         $role = get_post_meta( $post->ID, 'pne_recipient_role', true );
         $test_emails = get_post_meta( $post->ID, 'pne_test_emails', true );
+        $view_url = get_post_meta( $post->ID, 'pne_view_url', true );
         ?>
         <p>
             <label><?php esc_html_e( 'Subject', 'pne' ); ?></label><br>
@@ -101,6 +102,10 @@ add_action( 'add_meta_boxes', function () {
             <input type="hidden" id="pne_pdf_id" name="pne_pdf_id" value="<?php echo esc_attr( $pdf_id ); ?>">
             <button type="button" class="button" id="pne_select_pdf"><?php esc_html_e( 'Select PDF', 'pne' ); ?></button>
             <span id="pne_pdf_preview" style="margin-left:10px"><?php echo $pdf_url ? esc_html( basename( $pdf_url ) ) : ''; ?></span>
+        </p>
+        <p>
+            <label><?php esc_html_e( 'View online URL (optional)', 'pne' ); ?></label><br>
+            <input type="url" name="pne_view_url" value="<?php echo esc_attr( $view_url ); ?>" style="width:100%" placeholder="https://example.com/news/your-article">
         </p>
         <p>
             <label><?php esc_html_e( 'Sending date', 'pne' ); ?></label><br>
@@ -157,6 +162,7 @@ add_action( 'save_post', function ( $post_id ) {
     $date = isset( $_POST['pne_sending_date'] ) ? sanitize_text_field( wp_unslash( $_POST['pne_sending_date'] ) ) : '';
     $role = isset( $_POST['pne_recipient_role'] ) ? sanitize_text_field( wp_unslash( $_POST['pne_recipient_role'] ) ) : '';
     $test_emails = isset( $_POST['pne_test_emails'] ) ? sanitize_text_field( wp_unslash( $_POST['pne_test_emails'] ) ) : '';
+    $view_url = isset( $_POST['pne_view_url'] ) ? esc_url_raw( wp_unslash( $_POST['pne_view_url'] ) ) : '';
 
     update_post_meta( $post_id, 'pne_subject', $subject );
     if ( $png_id ) update_post_meta( $post_id, 'pne_png_id', $png_id );
@@ -164,6 +170,7 @@ add_action( 'save_post', function ( $post_id ) {
     update_post_meta( $post_id, 'pne_sending_date', $date );
     update_post_meta( $post_id, 'pne_recipient_role', $role );
     update_post_meta( $post_id, 'pne_test_emails', $test_emails );
+    update_post_meta( $post_id, 'pne_view_url', $view_url );
 
     // If date changed, reset processed flag and test campaign
     delete_post_meta( $post_id, 'pne_news_processed' );
@@ -183,10 +190,14 @@ add_action( 'admin_post_pne_send_test', function () {
     $png_id = get_post_meta( $post_id, 'pne_png_id', true );
     $pdf_id = get_post_meta( $post_id, 'pne_pdf_id', true );
     $test_emails = get_post_meta( $post_id, 'pne_test_emails', true );
+    $meta_view_url = get_post_meta( $post_id, 'pne_view_url', true );
 
     // resolve URLs
     $png_url = $png_id ? wp_get_attachment_url( $png_id ) : get_post_meta( $post_id, 'pne_png', true );
     $pdf_url = $pdf_id ? wp_get_attachment_url( $pdf_id ) : get_post_meta( $post_id, 'pne_pdf', true );
+
+    // use provided view_url or fallback to permalink
+    $view_url = $meta_view_url ? esc_url_raw( $meta_view_url ) : get_permalink( $post_id );
 
     // validate attachments existence if IDs
     if ( $png_id && ! get_attached_file( $png_id ) ) wp_die( 'PNG file missing' );
@@ -194,7 +205,6 @@ add_action( 'admin_post_pne_send_test', function () {
 
     // Build a polished HTML email body with subject, large image and action buttons
     $s = $subject ?: get_the_title( $post_id );
-    $view_url = get_permalink( $post_id );
 
     $message = '<div style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.4;padding:16px;">';
     $message .= '<h1 style="font-size:20px;color:#111;margin:0 0 12px;">' . esc_html( $s ) . '</h1>';
@@ -340,6 +350,8 @@ add_action( 'pne_process_news', function () {
         // resolve URLs and validate attachments if provided as IDs
         $png_url = $png_id ? wp_get_attachment_url( $png_id ) : get_post_meta( $p->ID, 'pne_png', true );
         $pdf_url = $pdf_id ? wp_get_attachment_url( $pdf_id ) : get_post_meta( $p->ID, 'pne_pdf', true );
+        $meta_view_url = get_post_meta( $p->ID, 'pne_view_url', true );
+        $view_url = $meta_view_url ? esc_url_raw( $meta_view_url ) : get_permalink( $p->ID );
 
         if ( $png_id && ! get_attached_file( $png_id ) ) {
             update_post_meta( $p->ID, 'pne_news_error', 'PNG missing' );
@@ -352,7 +364,6 @@ add_action( 'pne_process_news', function () {
 
         // Build a polished HTML email body with subject, large image and action buttons
         $s = $subject ? $subject : $p->post_title;
-        $view_url = get_permalink( $p->ID );
 
         $message = '<div style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.4;padding:16px;">';
         $message .= '<h1 style="font-size:20px;color:#111;margin:0 0 12px;">' . esc_html( $s ) . '</h1>';
