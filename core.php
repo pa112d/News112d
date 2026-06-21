@@ -311,11 +311,14 @@ add_action( 'add_meta_boxes', function () {
             $test_campaign_id = get_post_meta( $post->ID, 'pne_news_test_campaign_id', true );
             if ( ! $test_campaign_id ) {
                 $send_url = wp_nonce_url( admin_url( 'admin-post.php?action=pne_send_test&post_id=' . $post->ID ), 'pne_send_test_' . $post->ID );
-                echo '<a href="' . esc_url( $send_url ) . '" class="button button-primary">' . esc_html__( 'Send test', 'pne' ) . '</a>';
-            } else {
+                echo '<a id="pne-send-test-btn" href="' . esc_url( $send_url ) . '" class="button button-primary">' . esc_html__( 'Send test', 'pne' ) . '</a>';
+            } elseif ( ! $processed ) {
                 echo '<span class="dashicons dashicons-yes"></span> ' . esc_html__( 'Test sent', 'pne' );
                 $promote_url = wp_nonce_url( admin_url( 'admin-post.php?action=pne_promote_campaign&post_id=' . $post->ID ), 'pne_promote_' . $post->ID );
                 echo ' <a href="' . esc_url( $promote_url ) . '" class="button">' . esc_html__( 'Promote to full send', 'pne' ) . '</a>';
+            } else {
+                echo '<span class="dashicons dashicons-yes"></span> ' . esc_html__( 'Test sent', 'pne' );
+                echo ' &nbsp; <span class="dashicons dashicons-yes"></span> ' . esc_html__( 'Full send in progress', 'pne' );
             }
             ?>
         </p>
