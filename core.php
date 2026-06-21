@@ -32,26 +32,32 @@ add_action( 'init', function () {
  */
 add_action( 'pne_send', function () {
     global $wpdb;
-    
+
+    error_log( '[PNE] pne_send cron triggered at ' . current_time( 'mysql', 1 ) );
+
     // Get pending emails from queue
-    $queue_items = $wpdb->get_results( 
-        "SELECT * FROM {$wpdb->prefix}pne_queue WHERE status = 'pending' LIMIT 10" 
+    $queue_items = $wpdb->get_results(
+        "SELECT * FROM {$wpdb->prefix}pne_queue WHERE status = 'pending' LIMIT 10"
     );
-    
+
     if ( empty( $queue_items ) ) {
+        error_log( '[PNE] pne_send: no pending items in queue.' );
         return;
     }
-    
+
+    error_log( '[PNE] pne_send: processing ' . count( $queue_items ) . ' queue item(s).' );
+
     foreach ( $queue_items as $item ) {
         // Get campaign details
-        $campaign = $wpdb->get_row( 
-            $wpdb->prepare( 
-                "SELECT * FROM {$wpdb->prefix}pne_campaigns WHERE id = %d", 
-                $item->campaign_id 
-            ) 
+        $campaign = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT * FROM {$wpdb->prefix}pne_campaigns WHERE id = %d",
+                $item->campaign_id
+            )
         );
-        
+
         if ( ! $campaign ) {
+            error_log( '[PNE] pne_send: campaign not found for queue item ' . $item->id . ' (campaign_id=' . $item->campaign_id . ').' );
             // Campaign not found, mark as failed
             $wpdb->update(
                 "{$wpdb->prefix}pne_queue",
@@ -62,106 +68,113 @@ add_action( 'pne_send', function () {
             );
             continue;
         }
-        
+
         // Prepare email
         $to = $item->email;
         $subject = $campaign->subject ?: 'Newsletter';
         $message = $campaign->message;
         $from_email = ! empty( $item->from_email ) ? $item->from_email : get_option( 'admin_email' );
-        $from_name = ! empty( $item->from_name ) ? $item->from_name : get_option( 'blogname' );
-        
-        $headers = array();
+        $from_name  = ! empty( $item->from_name ) ? $item->from_name : get_option( 'blogname' );
+
+        $headers   = array();
         $headers[] = 'From: ' . $from_name . ' <' . $from_email . '>';
         $headers[] = 'Content-Type: text/html; charset=UTF-8';
-        
+
+        error_log( '[PNE] pne_send: sending to ' . $to . ' (queue_id=' . $item->id . ', campaign_id=' . $item->campaign_id . ').' );
+
         try {
             // Send email
             $sent = wp_mail( $to, $subject, $message, $headers );
-            
+
             if ( $sent ) {
+                error_log( '[PNE] pne_send: email sent successfully to ' . $to . '.' );
                 // Mark as sent
                 $wpdb->update(
                     "{$wpdb->prefix}pne_queue",
-                    array( 
-                        'status' => 'sent',
-                        'sent_at' => current_time( 'mysql', 1 )
+                    array(
+                        'status'  => 'sent',
+                        'sent_at' => current_time( 'mysql', 1 ),
                     ),
                     array( 'id' => $item->id ),
                     array( '%s', '%s' ),
                     array( '%d' )
                 );
-                
+
                 // Log success
                 $wpdb->insert(
                     "{$wpdb->prefix}pne_logs",
                     array(
                         'campaign_id' => $item->campaign_id,
-                        'queue_id' => $item->id,
-                        'email' => $to,
-                        'level' => 'info',
-                        'message' => 'Email sent successfully',
-                        'created_at' => current_time( 'mysql', 1 )
+                        'queue_id'    => $item->id,
+                        'email'       => $to,
+                        'level'       => 'info',
+                        'message'     => 'Email sent successfully',
+                        'created_at'  => current_time( 'mysql', 1 ),
                     ),
                     array( '%d', '%d', '%s', '%s', '%s', '%s' )
                 );
             } else {
                 // Mark as failed and increment attempts
-                $attempts = intval( $item->attempts ) + 1;
+                $attempts     = intval( $item->attempts ) + 1;
                 $max_attempts = 3;
-                
+
+                error_log( '[PNE] pne_send: wp_mail() returned false for ' . $to . ' (attempt ' . $attempts . ').' );
+
                 $wpdb->update(
                     "{$wpdb->prefix}pne_queue",
-                    array( 
-                        'status' => $attempts >= $max_attempts ? 'failed' : 'pending',
-                        'attempts' => $attempts,
-                        'last_error' => 'wp_mail() returned false'
+                    array(
+                        'status'     => $attempts >= $max_attempts ? 'failed' : 'pending',
+                        'attempts'   => $attempts,
+                        'last_error' => 'wp_mail() returned false',
                     ),
                     array( 'id' => $item->id ),
                     array( '%s', '%d', '%s' ),
                     array( '%d' )
                 );
-                
+
                 // Log error
                 $wpdb->insert(
                     "{$wpdb->prefix}pne_logs",
                     array(
                         'campaign_id' => $item->campaign_id,
-                        'queue_id' => $item->id,
-                        'email' => $to,
-                        'level' => 'error',
-                        'message' => 'Failed to send email (attempt ' . $attempts . ')',
-                        'created_at' => current_time( 'mysql', 1 )
+                        'queue_id'    => $item->id,
+                        'email'       => $to,
+                        'level'       => 'error',
+                        'message'     => 'Failed to send email (attempt ' . $attempts . ')',
+                        'created_at'  => current_time( 'mysql', 1 ),
                     ),
                     array( '%d', '%d', '%s', '%s', '%s', '%s' )
                 );
             }
         } catch ( Exception $e ) {
             // Handle exception
-            $attempts = intval( $item->attempts ) + 1;
+            $attempts     = intval( $item->attempts ) + 1;
             $max_attempts = 3;
-            
+
+            error_log( '[PNE] pne_send: exception for ' . $to . ': ' . $e->getMessage() );
+
             $wpdb->update(
                 "{$wpdb->prefix}pne_queue",
-                array( 
-                    'status' => $attempts >= $max_attempts ? 'failed' : 'pending',
-                    'attempts' => $attempts,
-                    'last_error' => $e->getMessage()
+                array(
+                    'status'     => $attempts >= $max_attempts ? 'failed' : 'pending',
+                    'attempts'   => $attempts,
+                    'last_error' => $e->getMessage(),
                 ),
                 array( 'id' => $item->id ),
                 array( '%s', '%d', '%s' ),
                 array( '%d' )
             );
-            
+
             // Log error
             $wpdb->insert(
                 "{$wpdb->prefix}pne_logs",
                 array(
                     'campaign_id' => $item->campaign_id,
-                    'queue_id' => $item->id,
-                    'email' => $to,
-                    'level' => 'error',
-                    'message' => 'Exception: ' . $e->getMessage(),
-                    'created_at' => current_time( 'mysql', 1 )
+                    'queue_id'    => $item->id,
+                    'email'       => $to,
+                    'level'       => 'error',
+                    'message'     => 'Exception: ' . $e->getMessage(),
+                    'created_at'  => current_time( 'mysql', 1 ),
                 ),
                 array( '%d', '%d', '%s', '%s', '%s', '%s' )
             );
@@ -298,11 +311,14 @@ add_action( 'add_meta_boxes', function () {
             $test_campaign_id = get_post_meta( $post->ID, 'pne_news_test_campaign_id', true );
             if ( ! $test_campaign_id ) {
                 $send_url = wp_nonce_url( admin_url( 'admin-post.php?action=pne_send_test&post_id=' . $post->ID ), 'pne_send_test_' . $post->ID );
-                echo '<a href="' . esc_url( $send_url ) . '" class="button button-primary">' . esc_html__( 'Send test', 'pne' ) . '</a>';
-            } else {
+                echo '<a id="pne-send-test-btn" href="' . esc_url( $send_url ) . '" class="button button-primary">' . esc_html__( 'Send test', 'pne' ) . '</a>';
+            } elseif ( ! $processed ) {
                 echo '<span class="dashicons dashicons-yes"></span> ' . esc_html__( 'Test sent', 'pne' );
                 $promote_url = wp_nonce_url( admin_url( 'admin-post.php?action=pne_promote_campaign&post_id=' . $post->ID ), 'pne_promote_' . $post->ID );
                 echo ' <a href="' . esc_url( $promote_url ) . '" class="button">' . esc_html__( 'Promote to full send', 'pne' ) . '</a>';
+            } else {
+                echo '<span class="dashicons dashicons-yes"></span> ' . esc_html__( 'Test sent', 'pne' );
+                echo ' &nbsp; <span class="dashicons dashicons-yes"></span> ' . esc_html__( 'Full send in progress', 'pne' );
             }
             ?>
         </p>
@@ -424,6 +440,11 @@ add_action( 'admin_post_pne_send_test', function () {
         }
 
         update_post_meta( $post_id, 'pne_news_test_campaign_id', $cid );
+
+        // Process the queue immediately so test emails are sent right away
+        // instead of waiting for the next cron run.
+        do_action( 'pne_send' );
+
         // redirect back
         wp_redirect( admin_url( 'post.php?post=' . $post_id . '&action=edit&test_sent=1' ) );
         exit;
@@ -482,6 +503,10 @@ add_action( 'admin_post_pne_promote_campaign', function () {
 
     // invalidate cache
     if ( function_exists( 'pne_invalidate_yearly_cache' ) ) pne_invalidate_yearly_cache();
+
+    // Begin processing the queue immediately so the first batch is sent right
+    // away without waiting for the next cron run.
+    do_action( 'pne_send' );
 
     wp_redirect( admin_url( 'post.php?post=' . $post_id . '&action=edit&promoted=1' ) );
     exit;
