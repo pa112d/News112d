@@ -192,15 +192,28 @@ add_action( 'admin_post_pne_send_test', function () {
     if ( $png_id && ! get_attached_file( $png_id ) ) wp_die( 'PNG file missing' );
     if ( $pdf_id && ! get_attached_file( $pdf_id ) ) wp_die( 'PDF file missing' );
 
-    $message = '';
-    if ( $png_url ) $message .= '<p><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $subject ) . '" style="max-width:100%;height:auto"></p>';
-    if ( $pdf_url ) $message .= '<p><a href="' . esc_url( $pdf_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Download PDF', 'pne' ) . '</a></p>';
-    if ( empty( $message ) ) $message = apply_filters( 'the_content', get_post_field( 'post_content', $post_id ) );
+    // Build a polished HTML email body with subject, large image and action buttons
+    $s = $subject ?: get_the_title( $post_id );
+    $view_url = get_permalink( $post_id );
+
+    $message = '<div style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.4;padding:16px;">';
+    $message .= '<h1 style="font-size:20px;color:#111;margin:0 0 12px;">' . esc_html( $s ) . '</h1>';
+    if ( $png_url ) {
+        $message .= '<div style="text-align:center;margin:18px 0;"><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $s ) . '" style="width:100%;max-width:600px;height:auto;border-radius:6px;display:block;margin:0 auto;"></div>';
+    }
+    $message .= '<p style="text-align:center;margin:20px 0;">';
+    if ( $pdf_url ) {
+        $message .= '<a href="' . esc_url( $pdf_url ) . '" style="display:inline-block;padding:12px 20px;background:#1e73be;color:#fff;text-decoration:none;border-radius:4px;margin-right:8px;">' . esc_html__( 'Download PDF', 'pne' ) . '</a>';
+    }
+    $message .= '<a href="' . esc_url( $view_url ) . '" style="display:inline-block;padding:12px 20px;background:#6ab04c;color:#fff;text-decoration:none;border-radius:4px;">' . esc_html__( 'View online', 'pne' ) . '</a>';
+    $message .= '</p>';
+    $message .= '<p style="color:#666;font-size:13px;text-align:center;margin-top:8px;">' . esc_html__( 'If you cannot click the buttons, copy and paste the links in your browser.', 'pne' ) . '</p>';
+    $message .= '</div>';
 
     global $wpdb;
     // create campaign in testing status
     $wpdb->insert( "{$wpdb->prefix}pne_campaigns", array(
-        'subject' => $subject ?: get_the_title( $post_id ),
+        'subject' => $s,
         'message' => $message,
         'created_at' => current_time( 'mysql', 1 ),
         'status' => 'testing',
@@ -337,17 +350,23 @@ add_action( 'pne_process_news', function () {
             continue;
         }
 
-        // Build message: include image and pdf link
-        $message = '';
+        // Build a polished HTML email body with subject, large image and action buttons
+        $s = $subject ? $subject : $p->post_title;
+        $view_url = get_permalink( $p->ID );
+
+        $message = '<div style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.4;padding:16px;">';
+        $message .= '<h1 style="font-size:20px;color:#111;margin:0 0 12px;">' . esc_html( $s ) . '</h1>';
         if ( $png_url ) {
-            $message .= '<p><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $subject ) . '" style="max-width:100%;height:auto"></p>';
+            $message .= '<div style="text-align:center;margin:18px 0;"><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $s ) . '" style="width:100%;max-width:600px;height:auto;border-radius:6px;display:block;margin:0 auto;"></div>';
         }
+        $message .= '<p style="text-align:center;margin:20px 0;">';
         if ( $pdf_url ) {
-            $message .= '<p><a href="' . esc_url( $pdf_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Download PDF', 'pne' ) . '</a></p>';
+            $message .= '<a href="' . esc_url( $pdf_url ) . '" style="display:inline-block;padding:12px 20px;background:#1e73be;color:#fff;text-decoration:none;border-radius:4px;margin-right:8px;">' . esc_html__( 'Download PDF', 'pne' ) . '</a>';
         }
-        if ( empty( $message ) ) {
-            $message = apply_filters( 'the_content', $p->post_content );
-        }
+        $message .= '<a href="' . esc_url( $view_url ) . '" style="display:inline-block;padding:12px 20px;background:#6ab04c;color:#fff;text-decoration:none;border-radius:4px;">' . esc_html__( 'View online', 'pne' ) . '</a>';
+        $message .= '</p>';
+        $message .= '<p style="color:#666;font-size:13px;text-align:center;margin-top:8px;">' . esc_html__( 'If you cannot click the buttons, copy and paste the links in your browser.', 'pne' ) . '</p>';
+        $message .= '</div>';
 
         $s = $subject ? $subject : $p->post_title;
 
