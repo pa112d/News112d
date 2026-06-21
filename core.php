@@ -74,6 +74,9 @@ add_action( 'admin_menu', function () {
     // Add submenu: News
     add_submenu_page( 'pne', __( 'News', 'pne' ), __( 'News', 'pne' ), 'manage_options', 'edit.php?post_type=pne_news' );
     
+    // Add submenu: Lists
+    add_submenu_page( 'pne', __( 'Lists', 'pne' ), __( 'Lists', 'pne' ), 'manage_options', 'pne-lists', 'pne_lists_ui' );
+    
     // Add submenu: Logs
     add_submenu_page( 'pne', __( 'Logs', 'pne' ), __( 'Logs', 'pne' ), 'manage_options', 'pne-logs', 'pne_logs_ui' );
 } );
@@ -102,7 +105,7 @@ add_action( 'add_meta_boxes', function () {
         $png_url = $png_id ? wp_get_attachment_url( $png_id ) : get_post_meta( $post->ID, 'pne_png', true );
         $pdf_url = $pdf_id ? wp_get_attachment_url( $pdf_id ) : get_post_meta( $post->ID, 'pne_pdf', true );
         $date = get_post_meta( $post->ID, 'pne_sending_date', true );
-        $role = get_post_meta( $post->ID, 'pne_recipient_role', true );
+        $list_id = get_post_meta( $post->ID, 'pne_mailing_list_id', true );
         $test_emails = get_post_meta( $post->ID, 'pne_test_emails', true );
         $view_url = get_post_meta( $post->ID, 'pne_view_url', true );
         ?>
@@ -131,13 +134,14 @@ add_action( 'add_meta_boxes', function () {
             <input type="date" name="pne_sending_date" value="<?php echo esc_attr( $date ); ?>">
         </p>
         <p>
-            <label><?php esc_html_e( 'Recipient role (optional, leave empty = all)', 'pne' ); ?></label><br>
-            <select name="pne_recipient_role">
-                <option value="" <?php selected( $role, '' ); ?>><?php esc_html_e( 'All users', 'pne' ); ?></option>
+            <label><?php esc_html_e( 'Mailing List', 'pne' ); ?></label><br>
+            <select name="pne_mailing_list_id">
+                <option value=""><?php esc_html_e( 'Select a list...', 'pne' ); ?></option>
                 <?php
-                global $wp_roles;
-                foreach ( $wp_roles->roles as $r_key => $r ) {
-                    echo '<option value="' . esc_attr( $r_key ) . '" ' . selected( $role, $r_key, false ) . '>' . esc_html( $r['name'] ) . '</option>';
+                global $wpdb;
+                $lists = $wpdb->get_results( "SELECT id, name FROM {$wpdb->prefix}pne_mailing_lists ORDER BY name ASC" );
+                foreach ( $lists as $l ) {
+                    echo '<option value="' . esc_attr( $l->id ) . '" ' . selected( $list_id, $l->id, false ) . '>' . esc_html( $l->name ) . '</option>';
                 }
                 ?>
             </select>
@@ -179,7 +183,7 @@ add_action( 'save_post', function ( $post_id ) {
     $png_id = isset( $_POST['pne_png_id'] ) ? intval( wp_unslash( $_POST['pne_png_id'] ) ) : 0;
     $pdf_id = isset( $_POST['pne_pdf_id'] ) ? intval( wp_unslash( $_POST['pne_pdf_id'] ) ) : 0;
     $date = isset( $_POST['pne_sending_date'] ) ? sanitize_text_field( wp_unslash( $_POST['pne_sending_date'] ) ) : '';
-    $role = isset( $_POST['pne_recipient_role'] ) ? sanitize_text_field( wp_unslash( $_POST['pne_recipient_role'] ) ) : '';
+    $list_id = isset( $_POST['pne_mailing_list_id'] ) ? intval( wp_unslash( $_POST['pne_mailing_list_id'] ) ) : 0;
     $test_emails = isset( $_POST['pne_test_emails'] ) ? sanitize_text_field( wp_unslash( $_POST['pne_test_emails'] ) ) : '';
     $view_url = isset( $_POST['pne_view_url'] ) ? esc_url_raw( wp_unslash( $_POST['pne_view_url'] ) ) : '';
 
@@ -187,7 +191,7 @@ add_action( 'save_post', function ( $post_id ) {
     if ( $png_id ) update_post_meta( $post_id, 'pne_png_id', $png_id );
     if ( $pdf_id ) update_post_meta( $post_id, 'pne_pdf_id', $pdf_id );
     update_post_meta( $post_id, 'pne_sending_date', $date );
-    update_post_meta( $post_id, 'pne_recipient_role', $role );
+    update_post_meta( $post_id, 'pne_mailing_list_id', $list_id );
     update_post_meta( $post_id, 'pne_test_emails', $test_emails );
     update_post_meta( $post_id, 'pne_view_url', $view_url );
 
@@ -293,20 +297,27 @@ add_action( 'admin_post_pne_promote_campaign', function () {
     $test_cid = get_post_meta( $post_id, 'pne_news_test_campaign_id', true );
     if ( ! $test_cid ) wp_die( 'No test campaign found' );
 
-    $role = get_post_meta( $post_id, 'pne_recipient_role', true );
+    $list_id = get_post_meta( $post_id, 'pne_mailing_list_id', true );
 
     global $wpdb;
 
     // set campaign status to running
     $wpdb->update( "{$wpdb->prefix}pne_campaigns", array( 'status' => 'running' ), array( 'id' => $test_cid ), array( '%s' ), array( '%d' ) );
 
-    // insert full recipients
-    if ( $role ) {
-        $users = get_users( array( 'role' => $role ) );
+    // Get emails from mailing list or all users
+    $emails = array();
+    if ( $list_id ) {
+        // Get emails from the selected mailing list
+        $subscribers = $wpdb->get_results( $wpdb->prepare( 
+            "SELECT email FROM {$wpdb->prefix}pne_list_subscribers WHERE list_id = %d", 
+            $list_id 
+        ) );
+        $emails = wp_list_pluck( $subscribers, 'email' );
     } else {
+        // Fallback: send to all users
         $users = get_users();
+        $emails = wp_list_pluck( $users, 'user_email' );
     }
-    $emails = wp_list_pluck( $users, 'user_email' );
     $emails = array_filter( array_unique( $emails ), 'is_email' );
 
     foreach ( $emails as $em ) {
@@ -331,12 +342,10 @@ add_action( 'admin_post_pne_promote_campaign', function () {
 
 /**
  * Process scheduled pne_news (daily)
- * This will create a test campaign if no test exists yet. Admin must promote to full send.
  */
 add_action( 'pne_process_news', function () {
     $today = date( 'Y-m-d' );
 
-    // find pne_news posts for today that are not processed
     $args = array(
         'post_type' => 'pne_news',
         'post_status' => 'publish',
@@ -358,7 +367,6 @@ add_action( 'pne_process_news', function () {
     if ( empty( $posts ) ) return;
 
     foreach ( $posts as $p ) {
-        // if a test campaign already exists, skip — admin must promote
         $existing_test = get_post_meta( $p->ID, 'pne_news_test_campaign_id', true );
         if ( $existing_test ) continue;
 
@@ -366,7 +374,6 @@ add_action( 'pne_process_news', function () {
         $png_id = get_post_meta( $p->ID, 'pne_png_id', true );
         $pdf_id = get_post_meta( $p->ID, 'pne_pdf_id', true );
 
-        // resolve URLs and validate attachments if provided as IDs
         $png_url = $png_id ? wp_get_attachment_url( $png_id ) : get_post_meta( $p->ID, 'pne_png', true );
         $pdf_url = $pdf_id ? wp_get_attachment_url( $pdf_id ) : get_post_meta( $p->ID, 'pne_pdf', true );
         $meta_view_url = get_post_meta( $p->ID, 'pne_view_url', true );
@@ -381,7 +388,6 @@ add_action( 'pne_process_news', function () {
             continue;
         }
 
-        // Build a polished HTML email body with subject, large image and action buttons
         $s = $subject ? $subject : $p->post_title;
 
         $message = '<div style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.4;padding:16px;">';
@@ -398,9 +404,6 @@ add_action( 'pne_process_news', function () {
         $message .= '<p style="color:#666;font-size:13px;text-align:center;margin-top:8px;">' . esc_html__( 'If you cannot click the buttons, copy and paste the links in your browser.', 'pne' ) . '</p>';
         $message .= '</div>';
 
-        $s = $subject ? $subject : $p->post_title;
-
-        // Insert campaign with testing status
         global $wpdb;
         $wpdb->insert(
             "{$wpdb->prefix}pne_campaigns",
@@ -415,7 +418,6 @@ add_action( 'pne_process_news', function () {
         $cid = $wpdb->insert_id;
 
         if ( $cid ) {
-            // Default test recipients = current user who scheduled or admin (use site admin email)
             $admins = get_users( array( 'role' => 'administrator' ) );
             $emails = wp_list_pluck( $admins, 'user_email' );
             $emails = array_filter( array_unique( $emails ), 'is_email' );
@@ -444,7 +446,7 @@ add_action( 'pne_process_news', function () {
 } );
 
 /**
- * Récupère la liste des destinataires de façon sûre (compat function)
+ * Get recipients safely (compat function)
  */
 function pne_get_recipients() {
     $users = get_users();
@@ -452,6 +454,240 @@ function pne_get_recipients() {
     $list = array_filter( array_unique( $list ), 'is_email' );
     return $list;
 }
+
+/**
+ * Mailing Lists Management UI
+ */
+function pne_lists_ui() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        return;
+    }
+
+    global $wpdb;
+    $action = isset( $_GET['action'] ) ? sanitize_text_field( wp_unslash( $_GET['action'] ) ) : '';
+    $list_id = isset( $_GET['list_id'] ) ? intval( $_GET['list_id'] ) : 0;
+
+    // Handle list deletion
+    if ( $action === 'delete' && $list_id ) {
+        if ( ! wp_verify_nonce( $_GET['_wpnonce'] ?? '', 'pne_delete_list_' . $list_id ) ) wp_die( 'Invalid nonce' );
+        $wpdb->delete( "{$wpdb->prefix}pne_mailing_lists", array( 'id' => $list_id ), array( '%d' ) );
+        $wpdb->delete( "{$wpdb->prefix}pne_list_subscribers", array( 'list_id' => $list_id ), array( '%d' ) );
+        wp_safe_remote_post( admin_url( 'admin.php?page=pne-lists&deleted=1' ) );
+        wp_redirect( admin_url( 'admin.php?page=pne-lists&deleted=1' ) );
+        exit;
+    }
+
+    // Edit list
+    if ( $action === 'edit' && $list_id ) {
+        $list = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}pne_mailing_lists WHERE id = %d", $list_id ) );
+        if ( ! $list ) wp_die( 'List not found' );
+        $subscribers = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}pne_list_subscribers WHERE list_id = %d ORDER BY email ASC", $list_id ) );
+        ?>
+        <div class="wrap">
+            <h1><?php echo esc_html__( 'Edit List', 'pne' ); ?></h1>
+            
+            <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+                <?php wp_nonce_field( 'pne_update_list' ); ?>
+                <input type="hidden" name="action" value="pne_update_list">
+                <input type="hidden" name="list_id" value="<?php echo esc_attr( $list->id ); ?>">
+                
+                <table class="form-table">
+                    <tr>
+                        <th><label><?php esc_html_e( 'List Name', 'pne' ); ?></label></th>
+                        <td><input type="text" name="list_name" value="<?php echo esc_attr( $list->name ); ?>" required style="width:100%;max-width:500px;"></td>
+                    </tr>
+                    <tr>
+                        <th><label><?php esc_html_e( 'Description', 'pne' ); ?></label></th>
+                        <td><textarea name="list_description" style="width:100%;max-width:500px;height:80px;"><?php echo esc_textarea( $list->description ); ?></textarea></td>
+                    </tr>
+                </table>
+                
+                <h2><?php esc_html_e( 'Subscribers', 'pne' ); ?> (<?php echo count( $subscribers ); ?>)</h2>
+                
+                <h3><?php esc_html_e( 'Add/Import Emails', 'pne' ); ?></h3>
+                <textarea name="import_emails" style="width:100%;max-width:800px;height:100px;" placeholder="email1@example.com&#10;email2@example.com&#10;email3@example.com"></textarea>
+                <p><small><?php esc_html_e( 'One email per line. New emails will be added to the list.', 'pne' ); ?></small></p>
+                
+                <h3><?php esc_html_e( 'Current Subscribers', 'pne' ); ?></h3>
+                <table class="widefat fixed striped">
+                    <thead>
+                        <tr>
+                            <th><?php esc_html_e( 'Email', 'pne' ); ?></th>
+                            <th><?php esc_html_e( 'Added', 'pne' ); ?></th>
+                            <th><?php esc_html_e( 'Action', 'pne' ); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if ( empty( $subscribers ) ) : ?>
+                            <tr><td colspan="3"><?php esc_html_e( 'No subscribers yet.', 'pne' ); ?></td></tr>
+                        <?php else : ?>
+                            <?php foreach ( $subscribers as $sub ) : ?>
+                                <tr>
+                                    <td><?php echo esc_html( $sub->email ); ?></td>
+                                    <td><?php echo esc_html( $sub->created_at ); ?></td>
+                                    <td>
+                                        <?php
+                                        $del_url = wp_nonce_url( admin_url( 'admin-post.php?action=pne_delete_subscriber&subscriber_id=' . $sub->id ), 'pne_delete_subscriber_' . $sub->id );
+                                        echo '<a href="' . esc_url( $del_url ) . '" class="button button-small button-link-delete">' . esc_html__( 'Remove', 'pne' ) . '</a>';
+                                        ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+                
+                <p style="margin-top:20px;">
+                    <button type="submit" class="button button-primary"><?php esc_html_e( 'Save Changes', 'pne' ); ?></button>
+                    <a href="<?php echo esc_url( admin_url( 'admin.php?page=pne-lists' ) ); ?>" class="button"><?php esc_html_e( 'Back', 'pne' ); ?></a>
+                </p>
+            </form>
+        </div>
+        <?php
+        return;
+    }
+
+    // List all mailing lists
+    $lists = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}pne_mailing_lists ORDER BY created_at DESC" );
+    ?>
+    <div class="wrap">
+        <h1><?php echo esc_html__( 'Mailing Lists', 'pne' ); ?></h1>
+        
+        <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin-bottom:20px;">
+            <?php wp_nonce_field( 'pne_create_list' ); ?>
+            <input type="hidden" name="action" value="pne_create_list">
+            
+            <input type="text" name="list_name" placeholder="<?php esc_attr_e( 'New list name...', 'pne' ); ?>" required style="padding:8px;margin-right:10px;">
+            <button type="submit" class="button button-primary"><?php esc_html_e( 'Create List', 'pne' ); ?></button>
+        </form>
+        
+        <table class="widefat fixed striped">
+            <thead>
+                <tr>
+                    <th><?php esc_html_e( 'Name', 'pne' ); ?></th>
+                    <th><?php esc_html_e( 'Description', 'pne' ); ?></th>
+                    <th><?php esc_html_e( 'Subscribers', 'pne' ); ?></th>
+                    <th><?php esc_html_e( 'Created', 'pne' ); ?></th>
+                    <th><?php esc_html_e( 'Actions', 'pne' ); ?></th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if ( empty( $lists ) ) : ?>
+                    <tr><td colspan="5"><?php esc_html_e( 'No mailing lists yet.', 'pne' ); ?></td></tr>
+                <?php else : ?>
+                    <?php foreach ( $lists as $list ) : 
+                        $count = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}pne_list_subscribers WHERE list_id = %d", $list->id ) );
+                    ?>
+                        <tr>
+                            <td><strong><?php echo esc_html( $list->name ); ?></strong></td>
+                            <td><?php echo esc_html( substr( $list->description, 0, 50 ) ); ?></td>
+                            <td><?php echo intval( $count ); ?></td>
+                            <td><?php echo esc_html( $list->created_at ); ?></td>
+                            <td>
+                                <?php
+                                $edit_url = admin_url( 'admin.php?page=pne-lists&action=edit&list_id=' . $list->id );
+                                $delete_url = wp_nonce_url( admin_url( 'admin.php?page=pne-lists&action=delete&list_id=' . $list->id ), 'pne_delete_list_' . $list->id );
+                                echo '<a href="' . esc_url( $edit_url ) . '" class="button">' . esc_html__( 'Edit', 'pne' ) . '</a> ';
+                                echo '<a href="' . esc_url( $delete_url ) . '" class="button button-link-delete">' . esc_html__( 'Delete', 'pne' ) . '</a>';
+                                ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+    <?php
+}
+
+/**
+ * Admin post handler: create new list
+ */
+add_action( 'admin_post_pne_create_list', function () {
+    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Forbidden' );
+    if ( ! wp_verify_nonce( $_POST['_wpnonce'] ?? '', 'pne_create_list' ) ) wp_die( 'Invalid nonce' );
+    
+    $list_name = isset( $_POST['list_name'] ) ? sanitize_text_field( wp_unslash( $_POST['list_name'] ) ) : '';
+    if ( empty( $list_name ) ) wp_die( 'List name required' );
+    
+    global $wpdb;
+    $wpdb->insert( "{$wpdb->prefix}pne_mailing_lists", array(
+        'name' => $list_name,
+        'description' => '',
+        'created_at' => current_time( 'mysql', 1 ),
+    ), array( '%s', '%s', '%s' ) );
+    
+    $list_id = $wpdb->insert_id;
+    wp_redirect( admin_url( 'admin.php?page=pne-lists&action=edit&list_id=' . $list_id ) );
+    exit;
+} );
+
+/**
+ * Admin post handler: update list
+ */
+add_action( 'admin_post_pne_update_list', function () {
+    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Forbidden' );
+    if ( ! wp_verify_nonce( $_POST['_wpnonce'] ?? '', 'pne_update_list' ) ) wp_die( 'Invalid nonce' );
+    
+    $list_id = isset( $_POST['list_id'] ) ? intval( $_POST['list_id'] ) : 0;
+    $list_name = isset( $_POST['list_name'] ) ? sanitize_text_field( wp_unslash( $_POST['list_name'] ) ) : '';
+    $list_description = isset( $_POST['list_description'] ) ? sanitize_textarea_field( wp_unslash( $_POST['list_description'] ) ) : '';
+    $import_emails = isset( $_POST['import_emails'] ) ? sanitize_textarea_field( wp_unslash( $_POST['import_emails'] ) ) : '';
+    
+    if ( empty( $list_id ) || empty( $list_name ) ) wp_die( 'Invalid data' );
+    
+    global $wpdb;
+    $wpdb->update( "{$wpdb->prefix}pne_mailing_lists", array(
+        'name' => $list_name,
+        'description' => $list_description,
+    ), array( 'id' => $list_id ), array( '%s', '%s' ), array( '%d' ) );
+    
+    // Import emails
+    if ( ! empty( $import_emails ) ) {
+        $emails = array_map( 'trim', explode( "\n", $import_emails ) );
+        $emails = array_filter( $emails, 'is_email' );
+        $emails = array_unique( $emails );
+        
+        foreach ( $emails as $email ) {
+            // Check if already exists
+            $exists = $wpdb->get_var( $wpdb->prepare( 
+                "SELECT id FROM {$wpdb->prefix}pne_list_subscribers WHERE list_id = %d AND email = %s", 
+                $list_id, $email 
+            ) );
+            
+            if ( ! $exists ) {
+                $wpdb->insert( "{$wpdb->prefix}pne_list_subscribers", array(
+                    'list_id' => $list_id,
+                    'email' => $email,
+                    'created_at' => current_time( 'mysql', 1 ),
+                ), array( '%d', '%s', '%s' ) );
+            }
+        }
+    }
+    
+    wp_redirect( admin_url( 'admin.php?page=pne-lists&action=edit&list_id=' . $list_id . '&updated=1' ) );
+    exit;
+} );
+
+/**
+ * Admin post handler: delete subscriber
+ */
+add_action( 'admin_post_pne_delete_subscriber', function () {
+    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Forbidden' );
+    
+    $subscriber_id = isset( $_GET['subscriber_id'] ) ? intval( $_GET['subscriber_id'] ) : 0;
+    if ( ! wp_verify_nonce( $_GET['_wpnonce'] ?? '', 'pne_delete_subscriber_' . $subscriber_id ) ) wp_die( 'Invalid nonce' );
+    
+    global $wpdb;
+    $subscriber = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}pne_list_subscribers WHERE id = %d", $subscriber_id ) );
+    
+    if ( ! $subscriber ) wp_die( 'Subscriber not found' );
+    
+    $wpdb->delete( "{$wpdb->prefix}pne_list_subscribers", array( 'id' => $subscriber_id ), array( '%d' ) );
+    
+    wp_redirect( admin_url( 'admin.php?page=pne-lists&action=edit&list_id=' . $subscriber->list_id . '&removed=1' ) );
+    exit;
+} );
 
 /**
  * Admin UI: Logs list with filters, export and purge
