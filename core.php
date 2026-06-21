@@ -111,6 +111,60 @@ add_action( 'admin_menu', function () {
 } );
 
 /**
+ * Enqueue admin assets for the PNE page
+ */
+add_action( 'admin_enqueue_scripts', function ( $hook ) {
+    // only load on our plugin page
+    if ( $hook !== 'toplevel_page_pne' ) {
+        return;
+    }
+
+    // Chart.js from CDN
+    wp_register_script( 'pne-chartjs', 'https://cdn.jsdelivr.net/npm/chart.js', array(), '4.0.0', true );
+    wp_enqueue_script( 'pne-chartjs' );
+
+    // Our admin stats script
+    wp_register_script( 'pne-stats', plugins_url( 'assets/pne-stats.js', __FILE__ ), array( 'pne-chartjs' ), '1.0', true );
+    $rest_url = esc_url_raw( rest_url( 'pne/v1/stats/yearly' ) );
+    $nonce = wp_create_nonce( 'wp_rest' );
+    wp_localize_script( 'pne-stats', 'pne_stats', array( 'endpoint' => $rest_url, 'nonce' => $nonce, 'refresh_interval' => 30000 ) );
+    wp_enqueue_script( 'pne-stats' );
+} );
+
+/**
+ * Register REST routes
+ */
+add_action( 'rest_api_init', function () {
+    register_rest_route( 'pne/v1', '/stats/yearly', array(
+        'methods'  => 'GET',
+        'callback' => 'pne_rest_yearly_stats',
+        'permission_callback' => function () { return current_user_can( 'manage_options' ); }
+    ) );
+} );
+
+/**
+ * REST callback: returns 12 months stats for current year
+ */
+function pne_rest_yearly_stats( WP_REST_Request $request ) {
+    global $wpdb;
+
+    $year = date( 'Y' );
+    $results = array();
+
+    for ( $m = 1; $m <= 12; $m++ ) {
+        $label = date_i18n( 'F', mktime( 0, 0, 0, $m, 1 ) );
+
+        $sent = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}pne_queue q JOIN {$wpdb->prefix}pne_campaigns c ON q.campaign_id = c.id WHERE YEAR(c.created_at) = %d AND MONTH(c.created_at) = %d AND q.status = %s", $year, $m, 'sent' ) ) );
+        $pending = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}pne_queue q JOIN {$wpdb->prefix}pne_campaigns c ON q.campaign_id = c.id WHERE YEAR(c.created_at) = %d AND MONTH(c.created_at) = %d AND q.status = %s", $year, $m, 'pending' ) ) );
+        $error = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}pne_queue q JOIN {$wpdb->prefix}pne_campaigns c ON q.campaign_id = c.id WHERE YEAR(c.created_at) = %d AND MONTH(c.created_at) = %d AND q.status = %s", $year, $m, 'error' ) ) );
+
+        $results[] = array( 'month' => $m, 'label' => $label, 'sent' => $sent, 'pending' => $pending, 'error' => $error );
+    }
+
+    return rest_ensure_response( array( 'success' => true, 'data' => $results ) );
+}
+
+/**
  * Interface admin : affichage et traitement POST (sécurisé)
  */
 function pne_ui() {
@@ -172,28 +226,16 @@ function pne_ui() {
         }
     }
 
-    // Stats (sous forme sûre)
-    $sent    = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}pne_queue WHERE status = %s", 'sent' ) ) );
-    $pending = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}pne_queue WHERE status = %s", 'pending' ) ) );
-    $error   = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}pne_queue WHERE status = %s", 'error' ) ) );
+    // Stats (sous forme sûre) - replaced by yearly grid rendered via JS
     ?>
-    <style>.box{background:#fff;padding:15px;margin-top:15px;border-radius:6px}</style>
+    <style>.box{background:#fff;padding:15px;margin-top:15px;border-radius:6px}.pne-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.pne-card{background:#fff;padding:10px;border-radius:6px;box-shadow:0 1px 2px rgba(0,0,0,0.05)}.pne-card canvas{width:100%!important;height:150px!important}</style>
     <div class="wrap">
         <h1><?php echo esc_html__( 'PNE V5.8', 'pne' ); ?></h1>
 
         <div class="box">
-            <h3><?php echo esc_html__( 'Stats', 'pne' ); ?></h3>
-            <canvas id="chart"></canvas>
-            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-            <script>
-            new Chart(document.getElementById('chart'),{
-                type:'doughnut',
-                data:{
-                    labels:['<?php echo esc_js( 'Sent' ); ?>','<?php echo esc_js( 'Pending' ); ?>','<?php echo esc_js( 'Error' ); ?>'],
-                    datasets:[{data:[<?php echo $sent; ?>,<?php echo $pending; ?>,<?php echo $error; ?>]}]
-                }
-            });
-            </script>
+            <h3><?php echo esc_html__( 'Yearly newsletters overview', 'pne' ); ?></h3>
+            <div id="pne-yearly-stats" class="pne-grid"></div>
+            <p><button id="pne-refresh" class="button"><?php echo esc_html__( 'Actualiser', 'pne' ); ?></button></p>
         </div>
 
         <form method="post">
