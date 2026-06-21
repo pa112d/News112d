@@ -21,6 +21,152 @@ add_action( 'init', function () {
     if ( ! wp_next_scheduled( 'pne_send' ) ) {
         wp_schedule_event( time(), 'pne_min', 'pne_send' );
     }
+    if ( ! wp_next_scheduled( 'pne_process_news' ) ) {
+        // daily processing of scheduled news
+        wp_schedule_event( time(), 'daily', 'pne_process_news' );
+    }
+} );
+
+/**
+ * Main cron handler: process email queue and send emails
+ */
+add_action( 'pne_send', function () {
+    global $wpdb;
+    
+    // Get pending emails from queue
+    $queue_items = $wpdb->get_results( 
+        "SELECT * FROM {$wpdb->prefix}pne_queue WHERE status = 'pending' LIMIT 10" 
+    );
+    
+    if ( empty( $queue_items ) ) {
+        return;
+    }
+    
+    foreach ( $queue_items as $item ) {
+        // Get campaign details
+        $campaign = $wpdb->get_row( 
+            $wpdb->prepare( 
+                "SELECT * FROM {$wpdb->prefix}pne_campaigns WHERE id = %d", 
+                $item->campaign_id 
+            ) 
+        );
+        
+        if ( ! $campaign ) {
+            // Campaign not found, mark as failed
+            $wpdb->update(
+                "{$wpdb->prefix}pne_queue",
+                array( 'status' => 'failed' ),
+                array( 'id' => $item->id ),
+                array( '%s' ),
+                array( '%d' )
+            );
+            continue;
+        }
+        
+        // Prepare email
+        $to = $item->email;
+        $subject = $campaign->subject ?: 'Newsletter';
+        $message = $campaign->message;
+        $from_email = ! empty( $item->from_email ) ? $item->from_email : get_option( 'admin_email' );
+        $from_name = ! empty( $item->from_name ) ? $item->from_name : get_option( 'blogname' );
+        
+        $headers = array();
+        $headers[] = 'From: ' . $from_name . ' <' . $from_email . '>';
+        $headers[] = 'Content-Type: text/html; charset=UTF-8';
+        
+        try {
+            // Send email
+            $sent = wp_mail( $to, $subject, $message, $headers );
+            
+            if ( $sent ) {
+                // Mark as sent
+                $wpdb->update(
+                    "{$wpdb->prefix}pne_queue",
+                    array( 
+                        'status' => 'sent',
+                        'sent_at' => current_time( 'mysql', 1 )
+                    ),
+                    array( 'id' => $item->id ),
+                    array( '%s', '%s' ),
+                    array( '%d' )
+                );
+                
+                // Log success
+                $wpdb->insert(
+                    "{$wpdb->prefix}pne_logs",
+                    array(
+                        'campaign_id' => $item->campaign_id,
+                        'queue_id' => $item->id,
+                        'email' => $to,
+                        'level' => 'info',
+                        'message' => 'Email sent successfully',
+                        'created_at' => current_time( 'mysql', 1 )
+                    ),
+                    array( '%d', '%d', '%s', '%s', '%s', '%s' )
+                );
+            } else {
+                // Mark as failed and increment attempts
+                $attempts = intval( $item->attempts ) + 1;
+                $max_attempts = 3;
+                
+                $wpdb->update(
+                    "{$wpdb->prefix}pne_queue",
+                    array( 
+                        'status' => $attempts >= $max_attempts ? 'failed' : 'pending',
+                        'attempts' => $attempts,
+                        'last_error' => 'wp_mail() returned false'
+                    ),
+                    array( 'id' => $item->id ),
+                    array( '%s', '%d', '%s' ),
+                    array( '%d' )
+                );
+                
+                // Log error
+                $wpdb->insert(
+                    "{$wpdb->prefix}pne_logs",
+                    array(
+                        'campaign_id' => $item->campaign_id,
+                        'queue_id' => $item->id,
+                        'email' => $to,
+                        'level' => 'error',
+                        'message' => 'Failed to send email (attempt ' . $attempts . ')',
+                        'created_at' => current_time( 'mysql', 1 )
+                    ),
+                    array( '%d', '%d', '%s', '%s', '%s', '%s' )
+                );
+            }
+        } catch ( Exception $e ) {
+            // Handle exception
+            $attempts = intval( $item->attempts ) + 1;
+            $max_attempts = 3;
+            
+            $wpdb->update(
+                "{$wpdb->prefix}pne_queue",
+                array( 
+                    'status' => $attempts >= $max_attempts ? 'failed' : 'pending',
+                    'attempts' => $attempts,
+                    'last_error' => $e->getMessage()
+                ),
+                array( 'id' => $item->id ),
+                array( '%s', '%d', '%s' ),
+                array( '%d' )
+            );
+            
+            // Log error
+            $wpdb->insert(
+                "{$wpdb->prefix}pne_logs",
+                array(
+                    'campaign_id' => $item->campaign_id,
+                    'queue_id' => $item->id,
+                    'email' => $to,
+                    'level' => 'error',
+                    'message' => 'Exception: ' . $e->getMessage(),
+                    'created_at' => current_time( 'mysql', 1 )
+                ),
+                array( '%d', '%d', '%s', '%s', '%s', '%s' )
+            );
+        }
+    }
 } );
 
 /**
@@ -64,7 +210,10 @@ add_action( 'admin_menu', function () {
         25
     );
     
-    // Add submenu: News (create/edit news)
+    // Add submenu: Campaigns
+    add_submenu_page( 'pne', __( 'Campaigns', 'pne' ), __( 'Campaigns', 'pne' ), 'manage_options', 'edit.php?post_type=pne_news' );
+    
+    // Add submenu: News
     add_submenu_page( 'pne', __( 'News', 'pne' ), __( 'News', 'pne' ), 'manage_options', 'edit.php?post_type=pne_news' );
     
     // Add submenu: Lists
@@ -97,6 +246,8 @@ add_action( 'add_meta_boxes', function () {
         $pdf_id = get_post_meta( $post->ID, 'pne_pdf_id', true );
         $png_url = $png_id ? wp_get_attachment_url( $png_id ) : get_post_meta( $post->ID, 'pne_png', true );
         $pdf_url = $pdf_id ? wp_get_attachment_url( $pdf_id ) : get_post_meta( $post->ID, 'pne_pdf', true );
+        $date = get_post_meta( $post->ID, 'pne_sending_date', true );
+        $list_id = get_post_meta( $post->ID, 'pne_mailing_list_id', true );
         $test_emails = get_post_meta( $post->ID, 'pne_test_emails', true );
         $view_url = get_post_meta( $post->ID, 'pne_view_url', true );
         ?>
@@ -121,11 +272,29 @@ add_action( 'add_meta_boxes', function () {
             <input type="url" name="pne_view_url" value="<?php echo esc_attr( $view_url ); ?>" style="width:100%" placeholder="https://example.com/news/your-article">
         </p>
         <p>
+            <label><?php esc_html_e( 'Sending date', 'pne' ); ?></label><br>
+            <input type="date" name="pne_sending_date" value="<?php echo esc_attr( $date ); ?>">
+        </p>
+        <p>
+            <label><?php esc_html_e( 'Mailing List', 'pne' ); ?></label><br>
+            <select name="pne_mailing_list_id">
+                <option value=""><?php esc_html_e( 'Select a list...', 'pne' ); ?></option>
+                <?php
+                global $wpdb;
+                $lists = $wpdb->get_results( "SELECT id, name FROM {$wpdb->prefix}pne_mailing_lists ORDER BY name ASC" );
+                foreach ( $lists as $l ) {
+                    echo '<option value="' . esc_attr( $l->id ) . '" ' . selected( $list_id, $l->id, false ) . '>' . esc_html( $l->name ) . '</option>';
+                }
+                ?>
+            </select>
+        </p>
+        <p>
             <label><?php esc_html_e( 'Test emails (comma separated). Defaults to current user email if empty.', 'pne' ); ?></label><br>
             <input type="text" name="pne_test_emails" value="<?php echo esc_attr( $test_emails ); ?>" style="width:100%">
         </p>
         <p>
             <?php
+            $processed = get_post_meta( $post->ID, 'pne_news_processed', true );
             $test_campaign_id = get_post_meta( $post->ID, 'pne_news_test_campaign_id', true );
             if ( ! $test_campaign_id ) {
                 $send_url = wp_nonce_url( admin_url( 'admin-post.php?action=pne_send_test&post_id=' . $post->ID ), 'pne_send_test_' . $post->ID );
@@ -133,7 +302,7 @@ add_action( 'add_meta_boxes', function () {
             } else {
                 echo '<span class="dashicons dashicons-yes"></span> ' . esc_html__( 'Test sent', 'pne' );
                 $promote_url = wp_nonce_url( admin_url( 'admin-post.php?action=pne_promote_campaign&post_id=' . $post->ID ), 'pne_promote_' . $post->ID );
-                echo ' <a href="' . esc_url( $promote_url ) . '" class="button button-primary">' . esc_html__( 'Promote to full send', 'pne' ) . '</a>';
+                echo ' <a href="' . esc_url( $promote_url ) . '" class="button">' . esc_html__( 'Promote to full send', 'pne' ) . '</a>';
             }
             ?>
         </p>
@@ -148,25 +317,34 @@ add_action( 'save_post', function ( $post_id ) {
     if ( get_post_type( $post_id ) !== 'pne_news' ) {
         return;
     }
-    // Skip saving if we're promoting campaign (prevent field reset)
-    if ( isset( $_GET['promoting'] ) && $_GET['promoting'] === '1' ) {
-        return;
-    }
     if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) return;
     if ( ! isset( $_POST['pne_news_meta_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['pne_news_meta_nonce'] ) ), 'pne_news_meta_nonce' ) ) return;
     if ( ! current_user_can( 'edit_post', $post_id ) ) return;
 
+    // get previous sending date before we overwrite it
+    $old_date = get_post_meta( $post_id, 'pne_sending_date', true );
+
     $subject = isset( $_POST['pne_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['pne_subject'] ) ) : '';
     $png_id = isset( $_POST['pne_png_id'] ) ? intval( wp_unslash( $_POST['pne_png_id'] ) ) : 0;
     $pdf_id = isset( $_POST['pne_pdf_id'] ) ? intval( wp_unslash( $_POST['pne_pdf_id'] ) ) : 0;
+    $date = isset( $_POST['pne_sending_date'] ) ? sanitize_text_field( wp_unslash( $_POST['pne_sending_date'] ) ) : '';
+    $list_id = isset( $_POST['pne_mailing_list_id'] ) ? intval( wp_unslash( $_POST['pne_mailing_list_id'] ) ) : 0;
     $test_emails = isset( $_POST['pne_test_emails'] ) ? sanitize_text_field( wp_unslash( $_POST['pne_test_emails'] ) ) : '';
     $view_url = isset( $_POST['pne_view_url'] ) ? esc_url_raw( wp_unslash( $_POST['pne_view_url'] ) ) : '';
 
     update_post_meta( $post_id, 'pne_subject', $subject );
     if ( $png_id ) update_post_meta( $post_id, 'pne_png_id', $png_id );
     if ( $pdf_id ) update_post_meta( $post_id, 'pne_pdf_id', $pdf_id );
+    update_post_meta( $post_id, 'pne_sending_date', $date );
+    update_post_meta( $post_id, 'pne_mailing_list_id', $list_id );
     update_post_meta( $post_id, 'pne_test_emails', $test_emails );
     update_post_meta( $post_id, 'pne_view_url', $view_url );
+
+    // If the sending date changed, reset processed flag and test campaign
+    if ( $old_date !== $date ) {
+        delete_post_meta( $post_id, 'pne_news_processed' );
+        delete_post_meta( $post_id, 'pne_news_test_campaign_id' );
+    }
 }, 10, 1 );
 
 /**
@@ -175,13 +353,7 @@ add_action( 'save_post', function ( $post_id ) {
 add_action( 'admin_post_pne_send_test', function () {
     if ( ! isset( $_GET['post_id'] ) ) wp_die( 'Missing post_id' );
     $post_id = intval( $_GET['post_id'] );
-    
-    // Verify nonce
-    $nonce = isset( $_GET['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ) : '';
-    if ( ! wp_verify_nonce( $nonce, 'pne_send_test_' . $post_id ) ) {
-        wp_die( 'Invalid nonce' );
-    }
-    
+    if ( ! wp_verify_nonce( $_GET['_wpnonce'] ?? '', 'pne_send_test_' . $post_id ) ) wp_die( 'Invalid nonce' );
     if ( ! current_user_can( 'edit_post', $post_id ) ) wp_die( 'No permission' );
 
     $subject = get_post_meta( $post_id, 'pne_subject', true );
@@ -266,26 +438,33 @@ add_action( 'admin_post_pne_send_test', function () {
 add_action( 'admin_post_pne_promote_campaign', function () {
     if ( ! isset( $_GET['post_id'] ) ) wp_die( 'Missing post_id' );
     $post_id = intval( $_GET['post_id'] );
-    
-    // Verify nonce
-    $nonce = isset( $_GET['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ) : '';
-    if ( ! wp_verify_nonce( $nonce, 'pne_promote_' . $post_id ) ) {
-        wp_die( 'Invalid nonce' );
-    }
-    
+    if ( ! wp_verify_nonce( $_GET['_wpnonce'] ?? '', 'pne_promote_' . $post_id ) ) wp_die( 'Invalid nonce' );
     if ( ! current_user_can( 'edit_post', $post_id ) ) wp_die( 'No permission' );
 
     $test_cid = get_post_meta( $post_id, 'pne_news_test_campaign_id', true );
     if ( ! $test_cid ) wp_die( 'No test campaign found' );
+
+    $list_id = get_post_meta( $post_id, 'pne_mailing_list_id', true );
 
     global $wpdb;
 
     // set campaign status to running
     $wpdb->update( "{$wpdb->prefix}pne_campaigns", array( 'status' => 'running' ), array( 'id' => $test_cid ), array( '%s' ), array( '%d' ) );
 
-    // Get emails from all users
-    $users = get_users();
-    $emails = wp_list_pluck( $users, 'user_email' );
+    // Get emails from mailing list or all users
+    $emails = array();
+    if ( $list_id ) {
+        // Get emails from the selected mailing list
+        $subscribers = $wpdb->get_results( $wpdb->prepare( 
+            "SELECT email FROM {$wpdb->prefix}pne_list_subscribers WHERE list_id = %d", 
+            $list_id 
+        ) );
+        $emails = wp_list_pluck( $subscribers, 'email' );
+    } else {
+        // Fallback: send to all users
+        $users = get_users();
+        $emails = wp_list_pluck( $users, 'user_email' );
+    }
     $emails = array_filter( array_unique( $emails ), 'is_email' );
 
     foreach ( $emails as $em ) {
@@ -301,9 +480,116 @@ add_action( 'admin_post_pne_promote_campaign', function () {
     update_post_meta( $post_id, 'pne_news_processed', 1 );
     update_post_meta( $post_id, 'pne_news_campaign_id', $test_cid );
 
-    // Set flag to prevent save_post from clearing fields, then redirect
-    wp_redirect( admin_url( 'post.php?post=' . $post_id . '&action=edit&promoted=1&promoting=1' ) );
+    // invalidate cache
+    if ( function_exists( 'pne_invalidate_yearly_cache' ) ) pne_invalidate_yearly_cache();
+
+    wp_redirect( admin_url( 'post.php?post=' . $post_id . '&action=edit&promoted=1' ) );
     exit;
+} );
+
+/**
+ * Process scheduled pne_news (daily)
+ */
+add_action( 'pne_process_news', function () {
+    $today = date( 'Y-m-d' );
+
+    $args = array(
+        'post_type' => 'pne_news',
+        'post_status' => 'publish',
+        'meta_query' => array(
+            array(
+                'key' => 'pne_sending_date',
+                'value' => $today,
+                'compare' => '='
+            ),
+            array(
+                'key' => 'pne_news_processed',
+                'compare' => 'NOT EXISTS'
+            )
+        ),
+        'posts_per_page' => -1,
+    );
+
+    $posts = get_posts( $args );
+    if ( empty( $posts ) ) return;
+
+    foreach ( $posts as $p ) {
+        $existing_test = get_post_meta( $p->ID, 'pne_news_test_campaign_id', true );
+        if ( $existing_test ) continue;
+
+        $subject = get_post_meta( $p->ID, 'pne_subject', true );
+        $png_id = get_post_meta( $p->ID, 'pne_png_id', true );
+        $pdf_id = get_post_meta( $p->ID, 'pne_pdf_id', true );
+
+        $png_url = $png_id ? wp_get_attachment_url( $png_id ) : get_post_meta( $p->ID, 'pne_png', true );
+        $pdf_url = $pdf_id ? wp_get_attachment_url( $pdf_id ) : get_post_meta( $p->ID, 'pne_pdf', true );
+        $meta_view_url = get_post_meta( $p->ID, 'pne_view_url', true );
+        $view_url = $meta_view_url ? esc_url_raw( $meta_view_url ) : get_permalink( $p->ID );
+
+        if ( $png_id && ! get_attached_file( $png_id ) ) {
+            update_post_meta( $p->ID, 'pne_news_error', 'PNG missing' );
+            continue;
+        }
+        if ( $pdf_id && ! get_attached_file( $pdf_id ) ) {
+            update_post_meta( $p->ID, 'pne_news_error', 'PDF missing' );
+            continue;
+        }
+
+        $s = $subject ? $subject : $p->post_title;
+
+        $message = '<div style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.4;padding:16px;">';
+        $message .= '<h1 style="font-size:20px;color:#111;margin:0 0 12px;">' . esc_html( $s ) . '</h1>';
+        if ( $png_url ) {
+            $message .= '<div style="text-align:center;margin:18px 0;"><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $s ) . '" style="width:100%;max-width:600px;height:auto;border-radius:4px;"></div>';
+        }
+        $message .= '<p style="text-align:center;margin:20px 0;">';
+        if ( $pdf_url ) {
+            $message .= '<a href="' . esc_url( $pdf_url ) . '" style="display:inline-block;padding:12px 20px;background:#1e73be;color:#fff;text-decoration:none;border-radius:4px;margin-right:8px;">' . esc_html__( 'Download PDF', 'pne' ) . '</a>';
+        }
+        $message .= '<a href="' . esc_url( $view_url ) . '" style="display:inline-block;padding:12px 20px;background:#6ab04c;color:#fff;text-decoration:none;border-radius:4px;">' . esc_html__( 'View Online', 'pne' ) . '</a>';
+        $message .= '</p>';
+        $message .= '<p style="color:#666;font-size:13px;text-align:center;margin-top:8px;">' . esc_html__( 'If you cannot click the buttons, copy and paste the links in your browser.', 'pne' ) . '</p>';
+        $message .= '</div>';
+
+        global $wpdb;
+        $wpdb->insert(
+            "{$wpdb->prefix}pne_campaigns",
+            array(
+                'subject' => $s,
+                'message' => $message,
+                'created_at' => current_time( 'mysql', 1 ),
+                'status' => 'testing',
+            ),
+            array( '%s', '%s', '%s', '%s' )
+        );
+        $cid = $wpdb->insert_id;
+
+        if ( $cid ) {
+            $admins = get_users( array( 'role' => 'administrator' ) );
+            $emails = wp_list_pluck( $admins, 'user_email' );
+            $emails = array_filter( array_unique( $emails ), 'is_email' );
+
+            foreach ( $emails as $em ) {
+                $wpdb->insert(
+                    "{$wpdb->prefix}pne_queue",
+                    array(
+                        'campaign_id' => $cid,
+                        'email' => $em,
+                        'from_email' => '',
+                        'from_name' => '',
+                        'status' => 'pending',
+                    ),
+                    array( '%d', '%s', '%s', '%s', '%s' )
+                );
+            }
+
+            update_post_meta( $p->ID, 'pne_news_test_campaign_id', $cid );
+
+            if ( function_exists( 'pne_invalidate_yearly_cache' ) ) {
+                pne_invalidate_yearly_cache();
+            }
+        }
+    }
 } );
 
 /**
@@ -330,10 +616,10 @@ function pne_lists_ui() {
 
     // Handle list deletion
     if ( $action === 'delete' && $list_id ) {
-        $nonce = isset( $_GET['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ) : '';
-        if ( ! wp_verify_nonce( $nonce, 'pne_delete_list_' . $list_id ) ) wp_die( 'Invalid nonce' );
+        if ( ! wp_verify_nonce( $_GET['_wpnonce'] ?? '', 'pne_delete_list_' . $list_id ) ) wp_die( 'Invalid nonce' );
         $wpdb->delete( "{$wpdb->prefix}pne_mailing_lists", array( 'id' => $list_id ), array( '%d' ) );
         $wpdb->delete( "{$wpdb->prefix}pne_list_subscribers", array( 'list_id' => $list_id ), array( '%d' ) );
+        wp_safe_remote_post( admin_url( 'admin.php?page=pne-lists&deleted=1' ) );
         wp_redirect( admin_url( 'admin.php?page=pne-lists&deleted=1' ) );
         exit;
     }
@@ -466,9 +752,7 @@ function pne_lists_ui() {
  */
 add_action( 'admin_post_pne_create_list', function () {
     if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Forbidden' );
-    
-    $nonce = isset( $_POST['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ) : '';
-    if ( ! wp_verify_nonce( $nonce, 'pne_create_list' ) ) wp_die( 'Invalid nonce' );
+    if ( ! wp_verify_nonce( $_POST['_wpnonce'] ?? '', 'pne_create_list' ) ) wp_die( 'Invalid nonce' );
     
     $list_name = isset( $_POST['list_name'] ) ? sanitize_text_field( wp_unslash( $_POST['list_name'] ) ) : '';
     if ( empty( $list_name ) ) wp_die( 'List name required' );
@@ -490,9 +774,7 @@ add_action( 'admin_post_pne_create_list', function () {
  */
 add_action( 'admin_post_pne_update_list', function () {
     if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Forbidden' );
-    
-    $nonce = isset( $_POST['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ) : '';
-    if ( ! wp_verify_nonce( $nonce, 'pne_update_list' ) ) wp_die( 'Invalid nonce' );
+    if ( ! wp_verify_nonce( $_POST['_wpnonce'] ?? '', 'pne_update_list' ) ) wp_die( 'Invalid nonce' );
     
     $list_id = isset( $_POST['list_id'] ) ? intval( $_POST['list_id'] ) : 0;
     $list_name = isset( $_POST['list_name'] ) ? sanitize_text_field( wp_unslash( $_POST['list_name'] ) ) : '';
@@ -541,8 +823,7 @@ add_action( 'admin_post_pne_delete_subscriber', function () {
     if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Forbidden' );
     
     $subscriber_id = isset( $_GET['subscriber_id'] ) ? intval( $_GET['subscriber_id'] ) : 0;
-    $nonce = isset( $_GET['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ) : '';
-    if ( ! wp_verify_nonce( $nonce, 'pne_delete_subscriber_' . $subscriber_id ) ) wp_die( 'Invalid nonce' );
+    if ( ! wp_verify_nonce( $_GET['_wpnonce'] ?? '', 'pne_delete_subscriber_' . $subscriber_id ) ) wp_die( 'Invalid nonce' );
     
     global $wpdb;
     $subscriber = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}pne_list_subscribers WHERE id = %d", $subscriber_id ) );
@@ -702,9 +983,7 @@ function pne_logs_ui() {
  */
 add_action( 'admin_post_pne_export_logs', function () {
     if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Forbidden' );
-    
-    $nonce = isset( $_REQUEST['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['_wpnonce'] ) ) : '';
-    if ( ! wp_verify_nonce( $nonce, 'pne_export_logs' ) ) wp_die( 'Invalid nonce' );
+    if ( ! wp_verify_nonce( $_REQUEST['_wpnonce'] ?? '', 'pne_export_logs' ) ) wp_die( 'Invalid nonce' );
 
     global $wpdb;
     $where = array(); $params = array();
@@ -736,10 +1015,7 @@ add_action( 'admin_post_pne_export_logs', function () {
  */
 add_action( 'admin_post_pne_purge_logs', function () {
     if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Forbidden' );
-    
-    $nonce = isset( $_POST['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ) : '';
-    if ( ! wp_verify_nonce( $nonce, 'pne_purge_logs' ) ) wp_die( 'Invalid nonce' );
-    
+    if ( ! wp_verify_nonce( $_POST['_wpnonce'] ?? '', 'pne_purge_logs' ) ) wp_die( 'Invalid nonce' );
     $days = isset( $_POST['days'] ) ? max( 1, intval( $_POST['days'] ) ) : 30;
     $cutoff = date( 'Y-m-d H:i:s', strtotime( '-' . $days . ' days' ) );
 
