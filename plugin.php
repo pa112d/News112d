@@ -58,8 +58,21 @@ function pne_install() {
       PRIMARY KEY (id)
     ) $charset_collate;";
 
+    // Logs table for detailed SMTP/error logging
+    $sql3 = "CREATE TABLE {$wpdb->prefix}pne_logs (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      campaign_id BIGINT UNSIGNED NULL,
+      queue_id BIGINT UNSIGNED NULL,
+      email VARCHAR(255) DEFAULT NULL,
+      level VARCHAR(20) DEFAULT 'error',
+      message TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id)
+    ) $charset_collate;";
+
     dbDelta($sql1);
     dbDelta($sql2);
+    dbDelta($sql3);
 
     // Ensure scheduled event exists
     if (! wp_next_scheduled('pne_send')) {
@@ -72,4 +85,5 @@ register_deactivation_hook(__FILE__, 'pne_deactivate');
 function pne_deactivate() {
     // unschedule our cron hook
     wp_clear_scheduled_hook('pne_send');
+    wp_clear_scheduled_hook('pne_process_news');
 }
