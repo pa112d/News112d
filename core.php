@@ -52,10 +52,11 @@ add_action( 'init', function () {
 } );
 
 /**
- * Add submenu entry for PNE News
+ * Add submenu entry for PNE News and Logs
  */
 add_action( 'admin_menu', function () {
     add_submenu_page( 'pne', __( 'News', 'pne' ), __( 'News', 'pne' ), 'manage_options', 'edit.php?post_type=pne_news' );
+    add_submenu_page( 'pne', __( 'Logs', 'pne' ), __( 'Logs', 'pne' ), 'manage_options', 'pne-logs', 'pne_logs_ui' );
 } );
 
 /**
@@ -402,3 +403,193 @@ function pne_get_recipients() {
     $list = array_filter( array_unique( $list ), 'is_email' );
     return $list;
 }
+
+/**
+ * Admin UI: Logs list with filters, export and purge
+ */
+function pne_logs_ui() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        return;
+    }
+
+    global $wpdb;
+
+    // Filters
+    $s_campaign = isset( $_GET['campaign_id'] ) ? intval( $_GET['campaign_id'] ) : 0;
+    $s_email = isset( $_GET['email'] ) ? sanitize_text_field( wp_unslash( $_GET['email'] ) ) : '';
+    $s_level = isset( $_GET['level'] ) ? sanitize_text_field( wp_unslash( $_GET['level'] ) ) : '';
+    $s_from = isset( $_GET['from'] ) ? sanitize_text_field( wp_unslash( $_GET['from'] ) ) : '';
+    $s_to = isset( $_GET['to'] ) ? sanitize_text_field( wp_unslash( $_GET['to'] ) ) : '';
+
+    $paged = isset( $_GET['paged'] ) ? max( 1, intval( $_GET['paged'] ) ) : 1;
+    $per_page = 30;
+    $offset = ( $paged - 1 ) * $per_page;
+
+    $where = array();
+    $params = array();
+    if ( $s_campaign ) {
+        $where[] = 'campaign_id = %d'; $params[] = $s_campaign;
+    }
+    if ( $s_email ) {
+        $where[] = 'email LIKE %s'; $params[] = '%' . $wpdb->esc_like( $s_email ) . '%';
+    }
+    if ( $s_level ) {
+        $where[] = 'level = %s'; $params[] = $s_level;
+    }
+    if ( $s_from ) {
+        $where[] = 'created_at >= %s'; $params[] = $s_from . ' 00:00:00';
+    }
+    if ( $s_to ) {
+        $where[] = 'created_at <= %s'; $params[] = $s_to . ' 23:59:59';
+    }
+
+    $where_sql = '';
+    if ( ! empty( $where ) ) {
+        $where_sql = 'WHERE ' . implode( ' AND ', $where );
+    }
+
+    // Count
+    $count_sql = "SELECT COUNT(*) FROM {$wpdb->prefix}pne_logs " . $where_sql;
+    $count_query = $wpdb->prepare( $count_sql, $params );
+    $total = intval( $wpdb->get_var( $count_query ) );
+
+    // Fetch
+    $sql = "SELECT * FROM {$wpdb->prefix}pne_logs " . $where_sql . " ORDER BY created_at DESC LIMIT %d OFFSET %d";
+    $params_with_limit = $params;
+    $params_with_limit[] = $per_page; $params_with_limit[] = $offset;
+    $prepared = $wpdb->prepare( $sql, $params_with_limit );
+    $rows = $wpdb->get_results( $prepared );
+
+    $total_pages = (int) ceil( $total / $per_page );
+    ?>
+    <div class="wrap">
+        <h1><?php echo esc_html__( 'PNE Logs', 'pne' ); ?></h1>
+
+        <form method="get" style="margin-bottom:12px">
+            <input type="hidden" name="page" value="pne-logs">
+            <input type="text" name="campaign_id" placeholder="<?php echo esc_attr__( 'Campaign ID', 'pne' ); ?>" value="<?php echo esc_attr( $s_campaign ); ?>">
+            <input type="text" name="email" placeholder="<?php echo esc_attr__( 'Email', 'pne' ); ?>" value="<?php echo esc_attr( $s_email ); ?>">
+            <select name="level">
+                <option value=""><?php echo esc_html__( 'Any level', 'pne' ); ?></option>
+                <option value="error" <?php selected( $s_level, 'error' ); ?>><?php echo esc_html__( 'Error', 'pne' ); ?></option>
+                <option value="warning" <?php selected( $s_level, 'warning' ); ?>><?php echo esc_html__( 'Warning', 'pne' ); ?></option>
+                <option value="info" <?php selected( $s_level, 'info' ); ?>><?php echo esc_html__( 'Info', 'pne' ); ?></option>
+            </select>
+            <label><?php echo esc_html__( 'From', 'pne' ); ?></label>
+            <input type="date" name="from" value="<?php echo esc_attr( $s_from ); ?>">
+            <label><?php echo esc_html__( 'To', 'pne' ); ?></label>
+            <input type="date" name="to" value="<?php echo esc_attr( $s_to ); ?>">
+            <button class="button" type="submit"><?php echo esc_html__( 'Filter', 'pne' ); ?></button>
+            <?php
+            $export_url = wp_nonce_url( add_query_arg( $_GET, admin_url( 'admin-post.php?action=pne_export_logs' ) ), 'pne_export_logs' );
+            echo ' <a class="button" href="' . esc_url( $export_url ) . '">' . esc_html__( 'Export CSV', 'pne' ) . '</a>';
+            ?>
+        </form>
+
+        <table class="widefat fixed striped">
+            <thead>
+                <tr>
+                    <th><?php echo esc_html__( 'ID', 'pne' ); ?></th>
+                    <th><?php echo esc_html__( 'Date', 'pne' ); ?></th>
+                    <th><?php echo esc_html__( 'Campaign ID', 'pne' ); ?></th>
+                    <th><?php echo esc_html__( 'Queue ID', 'pne' ); ?></th>
+                    <th><?php echo esc_html__( 'Email', 'pne' ); ?></th>
+                    <th><?php echo esc_html__( 'Level', 'pne' ); ?></th>
+                    <th><?php echo esc_html__( 'Message', 'pne' ); ?></th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if ( empty( $rows ) ) : ?>
+                    <tr><td colspan="7"><?php echo esc_html__( 'No logs.', 'pne' ); ?></td></tr>
+                <?php else : ?>
+                    <?php foreach ( $rows as $r ) : ?>
+                        <tr>
+                            <td><?php echo intval( $r->id ); ?></td>
+                            <td><?php echo esc_html( $r->created_at ); ?></td>
+                            <td><?php echo esc_html( $r->campaign_id ); ?></td>
+                            <td><?php echo esc_html( $r->queue_id ); ?></td>
+                            <td><?php echo esc_html( $r->email ); ?></td>
+                            <td><?php echo esc_html( $r->level ); ?></td>
+                            <td><?php echo esc_html( $r->message ); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </tbody>
+        </table>
+
+        <?php if ( $total_pages > 1 ) : ?>
+            <div class="tablenav">
+                <div class="tablenav-pages">
+                    <?php
+                    $base = add_query_arg( array( 'page' => 'pne-logs', 'paged' => '%#%' ) );
+                    echo paginate_links( array(
+                        'base' => $base,
+                        'format' => '',
+                        'current' => $paged,
+                        'total' => $total_pages,
+                    ) );
+                    ?>
+                </div>
+            </div>
+        <?php endif; ?>
+
+        <h2><?php echo esc_html__( 'Purge logs', 'pne' ); ?></h2>
+        <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+            <?php wp_nonce_field( 'pne_purge_logs' ); ?>
+            <input type="hidden" name="action" value="pne_purge_logs">
+            <label><?php echo esc_html__( 'Purge logs older than (days)', 'pne' ); ?></label>
+            <input type="number" name="days" value="30" min="1">
+            <button class="button button-secondary" type="submit"><?php echo esc_html__( 'Purge', 'pne' ); ?></button>
+        </form>
+
+    </div>
+    <?php
+}
+
+/**
+ * Export logs as CSV (admin_post)
+ */
+add_action( 'admin_post_pne_export_logs', function () {
+    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Forbidden' );
+    if ( ! wp_verify_nonce( $_REQUEST['_wpnonce'] ?? '', 'pne_export_logs' ) ) wp_die( 'Invalid nonce' );
+
+    global $wpdb;
+    $where = array(); $params = array();
+    if ( isset( $_GET['campaign_id'] ) && $_GET['campaign_id'] ) { $where[] = 'campaign_id = %d'; $params[] = intval( $_GET['campaign_id'] ); }
+    if ( isset( $_GET['email'] ) && $_GET['email'] ) { $where[] = 'email LIKE %s'; $params[] = '%' . $wpdb->esc_like( sanitize_text_field( wp_unslash( $_GET['email'] ) ) ) . '%'; }
+    if ( isset( $_GET['level'] ) && $_GET['level'] ) { $where[] = 'level = %s'; $params[] = sanitize_text_field( wp_unslash( $_GET['level'] ) ); }
+    if ( isset( $_GET['from'] ) && $_GET['from'] ) { $where[] = 'created_at >= %s'; $params[] = sanitize_text_field( wp_unslash( $_GET['from'] ) ) . ' 00:00:00'; }
+    if ( isset( $_GET['to'] ) && $_GET['to'] ) { $where[] = 'created_at <= %s'; $params[] = sanitize_text_field( wp_unslash( $_GET['to'] ) ) . ' 23:59:59'; }
+    $where_sql = '';
+    if ( ! empty( $where ) ) $where_sql = 'WHERE ' . implode( ' AND ', $where );
+
+    $sql = "SELECT * FROM {$wpdb->prefix}pne_logs " . $where_sql . " ORDER BY created_at DESC";
+    $prepared = $wpdb->prepare( $sql, $params );
+    $rows = $wpdb->get_results( $prepared );
+
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename=pne-logs-' . date('Y-m-d') . '.csv');
+    $out = fopen('php://output', 'w');
+    fputcsv( $out, array( 'id', 'created_at', 'campaign_id', 'queue_id', 'email', 'level', 'message' ) );
+    foreach ( $rows as $r ) {
+        fputcsv( $out, array( $r->id, $r->created_at, $r->campaign_id, $r->queue_id, $r->email, $r->level, $r->message ) );
+    }
+    fclose( $out );
+    exit;
+} );
+
+/**
+ * Purge logs older than N days (admin_post)
+ */
+add_action( 'admin_post_pne_purge_logs', function () {
+    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Forbidden' );
+    if ( ! wp_verify_nonce( $_POST['_wpnonce'] ?? '', 'pne_purge_logs' ) ) wp_die( 'Invalid nonce' );
+    $days = isset( $_POST['days'] ) ? max( 1, intval( $_POST['days'] ) ) : 30;
+    $cutoff = date( 'Y-m-d H:i:s', strtotime( '-' . $days . ' days' ) );
+
+    global $wpdb;
+    $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->prefix}pne_logs WHERE created_at < %s", $cutoff ) );
+
+    wp_redirect( admin_url( 'admin.php?page=pne-logs&purged=1' ) );
+    exit;
+} );
