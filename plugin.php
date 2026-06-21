@@ -70,9 +70,30 @@ function pne_install() {
       PRIMARY KEY (id)
     ) $charset_collate;";
 
+    // Mailing lists table
+    $sql4 = "CREATE TABLE {$wpdb->prefix}pne_mailing_lists (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      name VARCHAR(255) NOT NULL,
+      description TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id)
+    ) $charset_collate;";
+
+    // List subscribers table
+    $sql5 = "CREATE TABLE {$wpdb->prefix}pne_list_subscribers (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      list_id BIGINT UNSIGNED NOT NULL,
+      email VARCHAR(255) NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY unique_email_per_list (list_id, email)
+    ) $charset_collate;";
+
     dbDelta($sql1);
     dbDelta($sql2);
     dbDelta($sql3);
+    dbDelta($sql4);
+    dbDelta($sql5);
 
     // Ensure scheduled event exists
     if (! wp_next_scheduled('pne_send')) {
