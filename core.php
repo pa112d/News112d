@@ -59,31 +59,81 @@ add_action( 'admin_menu', function () {
 } );
 
 /**
+ * Enqueue admin scripts for media uploader on pne_news edit screens
+ */
+add_action( 'admin_enqueue_scripts', function ( $hook ) {
+    $screen = get_current_screen();
+    if ( $screen && isset( $screen->post_type ) && $screen->post_type === 'pne_news' ) {
+        wp_enqueue_media();
+        wp_register_script( 'pne-admin', plugins_url( 'assets/pne-admin.js', __FILE__ ), array( 'jquery' ), '1.0', true );
+        wp_enqueue_script( 'pne-admin' );
+    }
+} );
+
+/**
  * Meta boxes for pne_news
  */
 add_action( 'add_meta_boxes', function () {
     add_meta_box( 'pne_news_meta', __( 'PNE News Settings', 'pne' ), function ( $post ) {
         wp_nonce_field( 'pne_news_meta_nonce', 'pne_news_meta_nonce' );
         $subject = get_post_meta( $post->ID, 'pne_subject', true );
-        $png = get_post_meta( $post->ID, 'pne_png', true );
-        $pdf = get_post_meta( $post->ID, 'pne_pdf', true );
+        $png_id = get_post_meta( $post->ID, 'pne_png_id', true );
+        $pdf_id = get_post_meta( $post->ID, 'pne_pdf_id', true );
+        $png_url = $png_id ? wp_get_attachment_url( $png_id ) : get_post_meta( $post->ID, 'pne_png', true );
+        $pdf_url = $pdf_id ? wp_get_attachment_url( $pdf_id ) : get_post_meta( $post->ID, 'pne_pdf', true );
         $date = get_post_meta( $post->ID, 'pne_sending_date', true );
+        $role = get_post_meta( $post->ID, 'pne_recipient_role', true );
+        $test_emails = get_post_meta( $post->ID, 'pne_test_emails', true );
         ?>
         <p>
             <label><?php esc_html_e( 'Subject', 'pne' ); ?></label><br>
             <input type="text" name="pne_subject" value="<?php echo esc_attr( $subject ); ?>" style="width:100%">
         </p>
         <p>
-            <label><?php esc_html_e( 'PNG URL', 'pne' ); ?></label><br>
-            <input type="url" name="pne_png" value="<?php echo esc_attr( $png ); ?>" style="width:100%">
+            <label><?php esc_html_e( 'PNG (use media uploader)', 'pne' ); ?></label><br>
+            <input type="hidden" id="pne_png_id" name="pne_png_id" value="<?php echo esc_attr( $png_id ); ?>">
+            <button type="button" class="button" id="pne_select_png"><?php esc_html_e( 'Select PNG', 'pne' ); ?></button>
+            <span id="pne_png_preview" style="margin-left:10px"><?php echo $png_url ? esc_html( basename( $png_url ) ) : ''; ?></span>
         </p>
         <p>
-            <label><?php esc_html_e( 'PDF URL', 'pne' ); ?></label><br>
-            <input type="url" name="pne_pdf" value="<?php echo esc_attr( $pdf ); ?>" style="width:100%">
+            <label><?php esc_html_e( 'PDF (use media uploader)', 'pne' ); ?></label><br>
+            <input type="hidden" id="pne_pdf_id" name="pne_pdf_id" value="<?php echo esc_attr( $pdf_id ); ?>">
+            <button type="button" class="button" id="pne_select_pdf"><?php esc_html_e( 'Select PDF', 'pne' ); ?></button>
+            <span id="pne_pdf_preview" style="margin-left:10px"><?php echo $pdf_url ? esc_html( basename( $pdf_url ) ) : ''; ?></span>
         </p>
         <p>
             <label><?php esc_html_e( 'Sending date', 'pne' ); ?></label><br>
             <input type="date" name="pne_sending_date" value="<?php echo esc_attr( $date ); ?>">
+        </p>
+        <p>
+            <label><?php esc_html_e( 'Recipient role (optional, leave empty = all)', 'pne' ); ?></label><br>
+            <select name="pne_recipient_role">
+                <option value="" <?php selected( $role, '' ); ?>><?php esc_html_e( 'All users', 'pne' ); ?></option>
+                <?php
+                global $wp_roles;
+                foreach ( $wp_roles->roles as $r_key => $r ) {
+                    echo '<option value="' . esc_attr( $r_key ) . '" ' . selected( $role, $r_key, false ) . '>' . esc_html( $r['name'] ) . '</option>';
+                }
+                ?>
+            </select>
+        </p>
+        <p>
+            <label><?php esc_html_e( 'Test emails (comma separated). Defaults to current user email if empty.', 'pne' ); ?></label><br>
+            <input type="text" name="pne_test_emails" value="<?php echo esc_attr( $test_emails ); ?>" style="width:100%">
+        </p>
+        <p>
+            <?php
+            $processed = get_post_meta( $post->ID, 'pne_news_processed', true );
+            $test_campaign_id = get_post_meta( $post->ID, 'pne_news_test_campaign_id', true );
+            if ( ! $test_campaign_id ) {
+                $send_url = wp_nonce_url( admin_url( 'admin-post.php?action=pne_send_test&post_id=' . $post->ID ), 'pne_send_test_' . $post->ID );
+                echo '<a href="' . esc_url( $send_url ) . '" class="button button-primary">' . esc_html__( 'Send test', 'pne' ) . '</a>';
+            } else {
+                echo '<span class="dashicons dashicons-yes"></span> ' . esc_html__( 'Test sent', 'pne' );
+                $promote_url = wp_nonce_url( admin_url( 'admin-post.php?action=pne_promote_campaign&post_id=' . $post->ID ), 'pne_promote_' . $post->ID );
+                echo ' <a href="' . esc_url( $promote_url ) . '" class="button">' . esc_html__( 'Promote to full send', 'pne' ) . '</a>';
+            }
+            ?>
         </p>
         <?php
     }, 'pne_news', 'normal', 'default' );
@@ -101,58 +151,146 @@ add_action( 'save_post', function ( $post_id ) {
     if ( ! current_user_can( 'edit_post', $post_id ) ) return;
 
     $subject = isset( $_POST['pne_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['pne_subject'] ) ) : '';
-    $png = isset( $_POST['pne_png'] ) ? esc_url_raw( wp_unslash( $_POST['pne_png'] ) ) : '';
-    $pdf = isset( $_POST['pne_pdf'] ) ? esc_url_raw( wp_unslash( $_POST['pne_pdf'] ) ) : '';
+    $png_id = isset( $_POST['pne_png_id'] ) ? intval( wp_unslash( $_POST['pne_png_id'] ) ) : 0;
+    $pdf_id = isset( $_POST['pne_pdf_id'] ) ? intval( wp_unslash( $_POST['pne_pdf_id'] ) ) : 0;
     $date = isset( $_POST['pne_sending_date'] ) ? sanitize_text_field( wp_unslash( $_POST['pne_sending_date'] ) ) : '';
+    $role = isset( $_POST['pne_recipient_role'] ) ? sanitize_text_field( wp_unslash( $_POST['pne_recipient_role'] ) ) : '';
+    $test_emails = isset( $_POST['pne_test_emails'] ) ? sanitize_text_field( wp_unslash( $_POST['pne_test_emails'] ) ) : '';
 
     update_post_meta( $post_id, 'pne_subject', $subject );
-    update_post_meta( $post_id, 'pne_png', $png );
-    update_post_meta( $post_id, 'pne_pdf', $pdf );
+    if ( $png_id ) update_post_meta( $post_id, 'pne_png_id', $png_id );
+    if ( $pdf_id ) update_post_meta( $post_id, 'pne_pdf_id', $pdf_id );
     update_post_meta( $post_id, 'pne_sending_date', $date );
+    update_post_meta( $post_id, 'pne_recipient_role', $role );
+    update_post_meta( $post_id, 'pne_test_emails', $test_emails );
 
-    // If date changed, reset processed flag
+    // If date changed, reset processed flag and test campaign
     delete_post_meta( $post_id, 'pne_news_processed' );
+    delete_post_meta( $post_id, 'pne_news_test_campaign_id' );
 }, 10, 1 );
 
 /**
- * Shortcode to display a pne_news
- * Usage: [pne_news id=123]
+ * Admin post handler: send test campaign
  */
-add_shortcode( 'pne_news', function ( $atts ) {
-    $atts = shortcode_atts( array( 'id' => 0 ), $atts, 'pne_news' );
-    $id = intval( $atts['id'] );
-    if ( ! $id ) return '';
+add_action( 'admin_post_pne_send_test', function () {
+    if ( ! isset( $_GET['post_id'] ) ) wp_die( 'Missing post_id' );
+    $post_id = intval( $_GET['post_id'] );
+    if ( ! wp_verify_nonce( $_GET['_wpnonce'] ?? '', 'pne_send_test_' . $post_id ) ) wp_die( 'Invalid nonce' );
+    if ( ! current_user_can( 'edit_post', $post_id ) ) wp_die( 'No permission' );
 
-    $post = get_post( $id );
-    if ( ! $post || $post->post_type !== 'pne_news' ) return '';
+    $subject = get_post_meta( $post_id, 'pne_subject', true );
+    $png_id = get_post_meta( $post_id, 'pne_png_id', true );
+    $pdf_id = get_post_meta( $post_id, 'pne_pdf_id', true );
+    $test_emails = get_post_meta( $post_id, 'pne_test_emails', true );
 
-    $subject = get_post_meta( $id, 'pne_subject', true );
-    $png = get_post_meta( $id, 'pne_png', true );
-    $pdf = get_post_meta( $id, 'pne_pdf', true );
-    $date = get_post_meta( $id, 'pne_sending_date', true );
+    // resolve URLs
+    $png_url = $png_id ? wp_get_attachment_url( $png_id ) : get_post_meta( $post_id, 'pne_png', true );
+    $pdf_url = $pdf_id ? wp_get_attachment_url( $pdf_id ) : get_post_meta( $post_id, 'pne_pdf', true );
 
-    $html = '<div class="pne-news">';
-    $html .= '<h2>' . esc_html( $subject ? $subject : $post->post_title ) . '</h2>';
-    if ( $png ) {
-        $html .= '<p><img src="' . esc_url( $png ) . '" alt="' . esc_attr( $subject ) . '" style="max-width:100%;height:auto"></p>';
+    // validate attachments existence if IDs
+    if ( $png_id && ! get_attached_file( $png_id ) ) wp_die( 'PNG file missing' );
+    if ( $pdf_id && ! get_attached_file( $pdf_id ) ) wp_die( 'PDF file missing' );
+
+    $message = '';
+    if ( $png_url ) $message .= '<p><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $subject ) . '" style="max-width:100%;height:auto"></p>';
+    if ( $pdf_url ) $message .= '<p><a href="' . esc_url( $pdf_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Download PDF', 'pne' ) . '</a></p>';
+    if ( empty( $message ) ) $message = apply_filters( 'the_content', get_post_field( 'post_content', $post_id ) );
+
+    global $wpdb;
+    // create campaign in testing status
+    $wpdb->insert( "{$wpdb->prefix}pne_campaigns", array(
+        'subject' => $subject ?: get_the_title( $post_id ),
+        'message' => $message,
+        'created_at' => current_time( 'mysql', 1 ),
+        'status' => 'testing',
+    ), array( '%s', '%s', '%s', '%s' ) );
+    $cid = $wpdb->insert_id;
+
+    if ( $cid ) {
+        // prepare test recipients
+        $emails = array();
+        if ( $test_emails ) {
+            $parts = array_map( 'trim', explode( ',', $test_emails ) );
+            foreach ( $parts as $p ) if ( is_email( $p ) ) $emails[] = $p;
+        }
+        if ( empty( $emails ) ) {
+            $current_user = wp_get_current_user();
+            if ( is_email( $current_user->user_email ) ) $emails[] = $current_user->user_email;
+        }
+        $emails = array_unique( $emails );
+
+        foreach ( $emails as $em ) {
+            $wpdb->insert( "{$wpdb->prefix}pne_queue", array(
+                'campaign_id' => $cid,
+                'email' => $em,
+                'from_email' => '',
+                'from_name' => '',
+                'status' => 'pending',
+            ), array( '%d', '%s', '%s', '%s', '%s' ) );
+        }
+
+        update_post_meta( $post_id, 'pne_news_test_campaign_id', $cid );
+        // redirect back
+        wp_redirect( admin_url( 'post.php?post=' . $post_id . '&action=edit&test_sent=1' ) );
+        exit;
     }
-    if ( $pdf ) {
-        $html .= '<p><a href="' . esc_url( $pdf ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Download PDF', 'pne' ) . '</a></p>';
-    }
-    if ( $date ) {
-        $html .= '<p><small>' . esc_html( date_i18n( get_option( 'date_format' ), strtotime( $date ) ) ) . '</small></p>';
-    }
-    $html .= '</div>';
 
-    return $html;
+    wp_die( 'Could not create test campaign' );
+} );
+
+/**
+ * Admin post handler: promote test campaign to full send
+ */
+add_action( 'admin_post_pne_promote_campaign', function () {
+    if ( ! isset( $_GET['post_id'] ) ) wp_die( 'Missing post_id' );
+    $post_id = intval( $_GET['post_id'] );
+    if ( ! wp_verify_nonce( $_GET['_wpnonce'] ?? '', 'pne_promote_' . $post_id ) ) wp_die( 'Invalid nonce' );
+    if ( ! current_user_can( 'edit_post', $post_id ) ) wp_die( 'No permission' );
+
+    $test_cid = get_post_meta( $post_id, 'pne_news_test_campaign_id', true );
+    if ( ! $test_cid ) wp_die( 'No test campaign found' );
+
+    $role = get_post_meta( $post_id, 'pne_recipient_role', true );
+
+    global $wpdb;
+
+    // set campaign status to running
+    $wpdb->update( "{$wpdb->prefix}pne_campaigns", array( 'status' => 'running' ), array( 'id' => $test_cid ), array( '%s' ), array( '%d' ) );
+
+    // insert full recipients
+    if ( $role ) {
+        $users = get_users( array( 'role' => $role ) );
+    } else {
+        $users = get_users();
+    }
+    $emails = wp_list_pluck( $users, 'user_email' );
+    $emails = array_filter( array_unique( $emails ), 'is_email' );
+
+    foreach ( $emails as $em ) {
+        $wpdb->insert( "{$wpdb->prefix}pne_queue", array(
+            'campaign_id' => $test_cid,
+            'email' => $em,
+            'from_email' => '',
+            'from_name' => '',
+            'status' => 'pending',
+        ), array( '%d', '%s', '%s', '%s', '%s' ) );
+    }
+
+    update_post_meta( $post_id, 'pne_news_processed', 1 );
+    update_post_meta( $post_id, 'pne_news_campaign_id', $test_cid );
+
+    // invalidate cache
+    if ( function_exists( 'pne_invalidate_yearly_cache' ) ) pne_invalidate_yearly_cache();
+
+    wp_redirect( admin_url( 'post.php?post=' . $post_id . '&action=edit&promoted=1' ) );
+    exit;
 } );
 
 /**
  * Process scheduled pne_news (daily)
+ * This will create a test campaign if no test exists yet. Admin must promote to full send.
  */
 add_action( 'pne_process_news', function () {
-    global $wpdb;
-
     $today = date( 'Y-m-d' );
 
     // find pne_news posts for today that are not processed
@@ -177,42 +315,59 @@ add_action( 'pne_process_news', function () {
     if ( empty( $posts ) ) return;
 
     foreach ( $posts as $p ) {
+        // if a test campaign already exists, skip — admin must promote
+        $existing_test = get_post_meta( $p->ID, 'pne_news_test_campaign_id', true );
+        if ( $existing_test ) continue;
+
         $subject = get_post_meta( $p->ID, 'pne_subject', true );
-        $png = get_post_meta( $p->ID, 'pne_png', true );
-        $pdf = get_post_meta( $p->ID, 'pne_pdf', true );
+        $png_id = get_post_meta( $p->ID, 'pne_png_id', true );
+        $pdf_id = get_post_meta( $p->ID, 'pne_pdf_id', true );
+
+        // resolve URLs and validate attachments if provided as IDs
+        $png_url = $png_id ? wp_get_attachment_url( $png_id ) : get_post_meta( $p->ID, 'pne_png', true );
+        $pdf_url = $pdf_id ? wp_get_attachment_url( $pdf_id ) : get_post_meta( $p->ID, 'pne_pdf', true );
+
+        if ( $png_id && ! get_attached_file( $png_id ) ) {
+            update_post_meta( $p->ID, 'pne_news_error', 'PNG missing' );
+            continue;
+        }
+        if ( $pdf_id && ! get_attached_file( $pdf_id ) ) {
+            update_post_meta( $p->ID, 'pne_news_error', 'PDF missing' );
+            continue;
+        }
 
         // Build message: include image and pdf link
         $message = '';
-        if ( $png ) {
-            $message .= '<p><img src="' . esc_url( $png ) . '" alt="' . esc_attr( $subject ) . '" style="max-width:100%;height:auto"></p>';
+        if ( $png_url ) {
+            $message .= '<p><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $subject ) . '" style="max-width:100%;height:auto"></p>';
         }
-        if ( $pdf ) {
-            $message .= '<p><a href="' . esc_url( $pdf ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Download PDF', 'pne' ) . '</a></p>';
+        if ( $pdf_url ) {
+            $message .= '<p><a href="' . esc_url( $pdf_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Download PDF', 'pne' ) . '</a></p>';
         }
-        // fallback to post content if no png/pdf
         if ( empty( $message ) ) {
             $message = apply_filters( 'the_content', $p->post_content );
         }
 
         $s = $subject ? $subject : $p->post_title;
 
-        // Insert campaign
+        // Insert campaign with testing status
+        global $wpdb;
         $wpdb->insert(
             "{$wpdb->prefix}pne_campaigns",
             array(
                 'subject' => $s,
                 'message' => $message,
                 'created_at' => current_time( 'mysql', 1 ),
-                'status' => 'running',
+                'status' => 'testing',
             ),
             array( '%s', '%s', '%s', '%s' )
         );
         $cid = $wpdb->insert_id;
 
         if ( $cid ) {
-            // Default recipients = all users
-            $users = get_users();
-            $emails = wp_list_pluck( $users, 'user_email' );
+            // Default test recipients = current user who scheduled or admin (use site admin email)
+            $admins = get_users( array( 'role' => 'administrator' ) );
+            $emails = wp_list_pluck( $admins, 'user_email' );
             $emails = array_filter( array_unique( $emails ), 'is_email' );
 
             foreach ( $emails as $em ) {
@@ -229,11 +384,8 @@ add_action( 'pne_process_news', function () {
                 );
             }
 
-            // Mark post as processed and store campaign id
-            update_post_meta( $p->ID, 'pne_news_processed', 1 );
-            update_post_meta( $p->ID, 'pne_news_campaign_id', $cid );
+            update_post_meta( $p->ID, 'pne_news_test_campaign_id', $cid );
 
-            // Invalidate stats cache
             if ( function_exists( 'pne_invalidate_yearly_cache' ) ) {
                 pne_invalidate_yearly_cache();
             }
@@ -242,10 +394,9 @@ add_action( 'pne_process_news', function () {
 } );
 
 /**
- * Récupère la liste des destinataires de façon sûre (reste en place)
+ * Récupère la liste des destinataires de façon sûre (compat function)
  */
 function pne_get_recipients() {
-    // kept for backward compatibility - prefer calling get_users() when scheduling
     $users = get_users();
     $list  = wp_list_pluck( $users, 'user_email' );
     $list = array_filter( array_unique( $list ), 'is_email' );
