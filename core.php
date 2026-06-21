@@ -211,7 +211,13 @@ add_action( 'save_post', function ( $post_id ) {
 add_action( 'admin_post_pne_send_test', function () {
     if ( ! isset( $_GET['post_id'] ) ) wp_die( 'Missing post_id' );
     $post_id = intval( $_GET['post_id'] );
-    if ( ! wp_verify_nonce( $_GET['_wpnonce'] ?? '', 'pne_send_test_' . $post_id ) ) wp_die( 'Invalid nonce' );
+    
+    // Verify nonce
+    $nonce = isset( $_GET['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ) : '';
+    if ( ! wp_verify_nonce( $nonce, 'pne_send_test_' . $post_id ) ) {
+        wp_die( 'Invalid nonce' );
+    }
+    
     if ( ! current_user_can( 'edit_post', $post_id ) ) wp_die( 'No permission' );
 
     $subject = get_post_meta( $post_id, 'pne_subject', true );
@@ -237,15 +243,15 @@ add_action( 'admin_post_pne_send_test', function () {
     $message = '<div style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.4;padding:16px;">';
     $message .= '<h1 style="font-size:20px;color:#111;margin:0 0 12px;">' . esc_html( $s ) . '</h1>';
     if ( $png_url ) {
-        $message .= '<div style="text-align:center;margin:18px 0;"><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $s ) . '" style="width:100%;max-width:600px;height:auto;border-radius:[...]';
+        $message .= '<div style="text-align:center;margin:18px 0;"><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $s ) . '" style="width:100%;max-width:600px;height:auto;border-radius:4px;"></div>';
     }
     $message .= '<p style="text-align:center;margin:20px 0;">';
     if ( $pdf_url ) {
-        $message .= '<a href="' . esc_url( $pdf_url ) . '" style="display:inline-block;padding:12px 20px;background:#1e73be;color:#fff;text-decoration:none;border-radius:4px;margin-right:8px;[...]";
+        $message .= '<a href="' . esc_url( $pdf_url ) . '" style="display:inline-block;padding:12px 20px;background:#1e73be;color:#fff;text-decoration:none;border-radius:4px;margin-right:8px;">' . esc_html__( 'Download PDF', 'pne' ) . '</a>';
     }
-    $message .= '<a href="' . esc_url( $view_url ) . '" style="display:inline-block;padding:12px 20px;background:#6ab04c;color:#fff;text-decoration:none;border-radius:4px;">' . esc_html__( 'View [...]', 'pne' ) . '</a>';
+    $message .= '<a href="' . esc_url( $view_url ) . '" style="display:inline-block;padding:12px 20px;background:#6ab04c;color:#fff;text-decoration:none;border-radius:4px;">' . esc_html__( 'View Online', 'pne' ) . '</a>';
     $message .= '</p>';
-    $message .= '<p style="color:#666;font-size:13px;text-align:center;margin-top:8px;">' . esc_html__( 'If you cannot click the buttons, copy and paste the links in your browser.', 'pne' ) . '</[...];
+    $message .= '<p style="color:#666;font-size:13px;text-align:center;margin-top:8px;">' . esc_html__( 'If you cannot click the buttons, copy and paste the links in your browser.', 'pne' ) . '</p>';
     $message .= '</div>';
 
     global $wpdb;
@@ -296,7 +302,13 @@ add_action( 'admin_post_pne_send_test', function () {
 add_action( 'admin_post_pne_promote_campaign', function () {
     if ( ! isset( $_GET['post_id'] ) ) wp_die( 'Missing post_id' );
     $post_id = intval( $_GET['post_id'] );
-    if ( ! wp_verify_nonce( $_GET['_wpnonce'] ?? '', 'pne_promote_' . $post_id ) ) wp_die( 'Invalid nonce' );
+    
+    // Verify nonce
+    $nonce = isset( $_GET['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ) : '';
+    if ( ! wp_verify_nonce( $nonce, 'pne_promote_' . $post_id ) ) {
+        wp_die( 'Invalid nonce' );
+    }
+    
     if ( ! current_user_can( 'edit_post', $post_id ) ) wp_die( 'No permission' );
 
     $test_cid = get_post_meta( $post_id, 'pne_news_test_campaign_id', true );
@@ -398,15 +410,15 @@ add_action( 'pne_process_news', function () {
         $message = '<div style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.4;padding:16px;">';
         $message .= '<h1 style="font-size:20px;color:#111;margin:0 0 12px;">' . esc_html( $s ) . '</h1>';
         if ( $png_url ) {
-            $message .= '<div style="text-align:center;margin:18px 0;"><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $s ) . '" style="width:100%;max-width:600px;height:auto;border-rad[...]';
+            $message .= '<div style="text-align:center;margin:18px 0;"><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $s ) . '" style="width:100%;max-width:600px;height:auto;border-radius:4px;"></div>';
         }
         $message .= '<p style="text-align:center;margin:20px 0;">';
         if ( $pdf_url ) {
-            $message .= '<a href="' . esc_url( $pdf_url ) . '" style="display:inline-block;padding:12px 20px;background:#1e73be;color:#fff;text-decoration:none;border-radius:4px;margin-right:8px;[...]");
+            $message .= '<a href="' . esc_url( $pdf_url ) . '" style="display:inline-block;padding:12px 20px;background:#1e73be;color:#fff;text-decoration:none;border-radius:4px;margin-right:8px;">' . esc_html__( 'Download PDF', 'pne' ) . '</a>';
         }
-        $message .= '<a href="' . esc_url( $view_url ) . '" style="display:inline-block;padding:12px 20px;background:#6ab04c;color:#fff;text-decoration:none;border-radius:4px;">' . esc_html__( 'V[...]', 'pne' ) . '</a>';
+        $message .= '<a href="' . esc_url( $view_url ) . '" style="display:inline-block;padding:12px 20px;background:#6ab04c;color:#fff;text-decoration:none;border-radius:4px;">' . esc_html__( 'View Online', 'pne' ) . '</a>';
         $message .= '</p>';
-        $message .= '<p style="color:#666;font-size:13px;text-align:center;margin-top:8px;">' . esc_html__( 'If you cannot click the buttons, copy and paste the links in your browser.', 'pne' ) . '[...];
+        $message .= '<p style="color:#666;font-size:13px;text-align:center;margin-top:8px;">' . esc_html__( 'If you cannot click the buttons, copy and paste the links in your browser.', 'pne' ) . '</p>';
         $message .= '</div>';
 
         global $wpdb;
@@ -474,10 +486,10 @@ function pne_lists_ui() {
 
     // Handle list deletion
     if ( $action === 'delete' && $list_id ) {
-        if ( ! wp_verify_nonce( $_GET['_wpnonce'] ?? '', 'pne_delete_list_' . $list_id ) ) wp_die( 'Invalid nonce' );
+        $nonce = isset( $_GET['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ) : '';
+        if ( ! wp_verify_nonce( $nonce, 'pne_delete_list_' . $list_id ) ) wp_die( 'Invalid nonce' );
         $wpdb->delete( "{$wpdb->prefix}pne_mailing_lists", array( 'id' => $list_id ), array( '%d' ) );
         $wpdb->delete( "{$wpdb->prefix}pne_list_subscribers", array( 'list_id' => $list_id ), array( '%d' ) );
-        wp_safe_remote_post( admin_url( 'admin.php?page=pne-lists&deleted=1' ) );
         wp_redirect( admin_url( 'admin.php?page=pne-lists&deleted=1' ) );
         exit;
     }
@@ -610,7 +622,9 @@ function pne_lists_ui() {
  */
 add_action( 'admin_post_pne_create_list', function () {
     if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Forbidden' );
-    if ( ! wp_verify_nonce( $_POST['_wpnonce'] ?? '', 'pne_create_list' ) ) wp_die( 'Invalid nonce' );
+    
+    $nonce = isset( $_POST['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ) : '';
+    if ( ! wp_verify_nonce( $nonce, 'pne_create_list' ) ) wp_die( 'Invalid nonce' );
     
     $list_name = isset( $_POST['list_name'] ) ? sanitize_text_field( wp_unslash( $_POST['list_name'] ) ) : '';
     if ( empty( $list_name ) ) wp_die( 'List name required' );
@@ -632,7 +646,9 @@ add_action( 'admin_post_pne_create_list', function () {
  */
 add_action( 'admin_post_pne_update_list', function () {
     if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Forbidden' );
-    if ( ! wp_verify_nonce( $_POST['_wpnonce'] ?? '', 'pne_update_list' ) ) wp_die( 'Invalid nonce' );
+    
+    $nonce = isset( $_POST['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ) : '';
+    if ( ! wp_verify_nonce( $nonce, 'pne_update_list' ) ) wp_die( 'Invalid nonce' );
     
     $list_id = isset( $_POST['list_id'] ) ? intval( $_POST['list_id'] ) : 0;
     $list_name = isset( $_POST['list_name'] ) ? sanitize_text_field( wp_unslash( $_POST['list_name'] ) ) : '';
@@ -681,7 +697,8 @@ add_action( 'admin_post_pne_delete_subscriber', function () {
     if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Forbidden' );
     
     $subscriber_id = isset( $_GET['subscriber_id'] ) ? intval( $_GET['subscriber_id'] ) : 0;
-    if ( ! wp_verify_nonce( $_GET['_wpnonce'] ?? '', 'pne_delete_subscriber_' . $subscriber_id ) ) wp_die( 'Invalid nonce' );
+    $nonce = isset( $_GET['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ) : '';
+    if ( ! wp_verify_nonce( $nonce, 'pne_delete_subscriber_' . $subscriber_id ) ) wp_die( 'Invalid nonce' );
     
     global $wpdb;
     $subscriber = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}pne_list_subscribers WHERE id = %d", $subscriber_id ) );
@@ -841,7 +858,9 @@ function pne_logs_ui() {
  */
 add_action( 'admin_post_pne_export_logs', function () {
     if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Forbidden' );
-    if ( ! wp_verify_nonce( $_REQUEST['_wpnonce'] ?? '', 'pne_export_logs' ) ) wp_die( 'Invalid nonce' );
+    
+    $nonce = isset( $_REQUEST['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['_wpnonce'] ) ) : '';
+    if ( ! wp_verify_nonce( $nonce, 'pne_export_logs' ) ) wp_die( 'Invalid nonce' );
 
     global $wpdb;
     $where = array(); $params = array();
@@ -873,7 +892,10 @@ add_action( 'admin_post_pne_export_logs', function () {
  */
 add_action( 'admin_post_pne_purge_logs', function () {
     if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Forbidden' );
-    if ( ! wp_verify_nonce( $_POST['_wpnonce'] ?? '', 'pne_purge_logs' ) ) wp_die( 'Invalid nonce' );
+    
+    $nonce = isset( $_POST['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ) : '';
+    if ( ! wp_verify_nonce( $nonce, 'pne_purge_logs' ) ) wp_die( 'Invalid nonce' );
+    
     $days = isset( $_POST['days'] ) ? max( 1, intval( $_POST['days'] ) ) : 30;
     $cutoff = date( 'Y-m-d H:i:s', strtotime( '-' . $days . ' days' ) );
 
