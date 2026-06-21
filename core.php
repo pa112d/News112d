@@ -52,10 +52,29 @@ add_action( 'init', function () {
 } );
 
 /**
- * Add submenu entry for PNE News and Logs
+ * Add main PNE menu and submenus
  */
 add_action( 'admin_menu', function () {
+    // Add main menu entry
+    add_menu_page(
+        __( 'PNE - Newsletter', 'pne' ),
+        __( 'Newsletter', 'pne' ),
+        'manage_options',
+        'pne',
+        function () {
+            echo '<div class="wrap"><h1>' . esc_html__( 'Newsletter Manager', 'pne' ) . '</h1></div>';
+        },
+        'dashicons-email-alt',
+        25
+    );
+    
+    // Add submenu: Campaigns
+    add_submenu_page( 'pne', __( 'Campaigns', 'pne' ), __( 'Campaigns', 'pne' ), 'manage_options', 'edit.php?post_type=pne_news' );
+    
+    // Add submenu: News
     add_submenu_page( 'pne', __( 'News', 'pne' ), __( 'News', 'pne' ), 'manage_options', 'edit.php?post_type=pne_news' );
+    
+    // Add submenu: Logs
     add_submenu_page( 'pne', __( 'Logs', 'pne' ), __( 'Logs', 'pne' ), 'manage_options', 'pne-logs', 'pne_logs_ui' );
 } );
 
@@ -209,13 +228,13 @@ add_action( 'admin_post_pne_send_test', function () {
     $message = '<div style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.4;padding:16px;">';
     $message .= '<h1 style="font-size:20px;color:#111;margin:0 0 12px;">' . esc_html( $s ) . '</h1>';
     if ( $png_url ) {
-        $message .= '<div style="text-align:center;margin:18px 0;"><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $s ) . '" style="width:100%;max-width:600px;height:auto;border-radius:6px;display:block;margin:0 auto;"></div>';
+        $message .= '<div style="text-align:center;margin:18px 0;"><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $s ) . '" style="width:100%;max-width:600px;height:auto;border-radius:4px;"></div>';
     }
     $message .= '<p style="text-align:center;margin:20px 0;">';
     if ( $pdf_url ) {
         $message .= '<a href="' . esc_url( $pdf_url ) . '" style="display:inline-block;padding:12px 20px;background:#1e73be;color:#fff;text-decoration:none;border-radius:4px;margin-right:8px;">' . esc_html__( 'Download PDF', 'pne' ) . '</a>';
     }
-    $message .= '<a href="' . esc_url( $view_url ) . '" style="display:inline-block;padding:12px 20px;background:#6ab04c;color:#fff;text-decoration:none;border-radius:4px;">' . esc_html__( 'View online', 'pne' ) . '</a>';
+    $message .= '<a href="' . esc_url( $view_url ) . '" style="display:inline-block;padding:12px 20px;background:#6ab04c;color:#fff;text-decoration:none;border-radius:4px;">' . esc_html__( 'View Online', 'pne' ) . '</a>';
     $message .= '</p>';
     $message .= '<p style="color:#666;font-size:13px;text-align:center;margin-top:8px;">' . esc_html__( 'If you cannot click the buttons, copy and paste the links in your browser.', 'pne' ) . '</p>';
     $message .= '</div>';
@@ -368,13 +387,13 @@ add_action( 'pne_process_news', function () {
         $message = '<div style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.4;padding:16px;">';
         $message .= '<h1 style="font-size:20px;color:#111;margin:0 0 12px;">' . esc_html( $s ) . '</h1>';
         if ( $png_url ) {
-            $message .= '<div style="text-align:center;margin:18px 0;"><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $s ) . '" style="width:100%;max-width:600px;height:auto;border-radius:6px;display:block;margin:0 auto;"></div>';
+            $message .= '<div style="text-align:center;margin:18px 0;"><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $s ) . '" style="width:100%;max-width:600px;height:auto;border-radius:4px;"></div>';
         }
         $message .= '<p style="text-align:center;margin:20px 0;">';
         if ( $pdf_url ) {
             $message .= '<a href="' . esc_url( $pdf_url ) . '" style="display:inline-block;padding:12px 20px;background:#1e73be;color:#fff;text-decoration:none;border-radius:4px;margin-right:8px;">' . esc_html__( 'Download PDF', 'pne' ) . '</a>';
         }
-        $message .= '<a href="' . esc_url( $view_url ) . '" style="display:inline-block;padding:12px 20px;background:#6ab04c;color:#fff;text-decoration:none;border-radius:4px;">' . esc_html__( 'View online', 'pne' ) . '</a>';
+        $message .= '<a href="' . esc_url( $view_url ) . '" style="display:inline-block;padding:12px 20px;background:#6ab04c;color:#fff;text-decoration:none;border-radius:4px;">' . esc_html__( 'View Online', 'pne' ) . '</a>';
         $message .= '</p>';
         $message .= '<p style="color:#666;font-size:13px;text-align:center;margin-top:8px;">' . esc_html__( 'If you cannot click the buttons, copy and paste the links in your browser.', 'pne' ) . '</p>';
         $message .= '</div>';
