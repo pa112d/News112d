@@ -179,6 +179,9 @@ add_action( 'save_post', function ( $post_id ) {
     if ( ! isset( $_POST['pne_news_meta_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['pne_news_meta_nonce'] ) ), 'pne_news_meta_nonce' ) ) return;
     if ( ! current_user_can( 'edit_post', $post_id ) ) return;
 
+    // get previous sending date before we overwrite it
+    $old_date = get_post_meta( $post_id, 'pne_sending_date', true );
+
     $subject = isset( $_POST['pne_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['pne_subject'] ) ) : '';
     $png_id = isset( $_POST['pne_png_id'] ) ? intval( wp_unslash( $_POST['pne_png_id'] ) ) : 0;
     $pdf_id = isset( $_POST['pne_pdf_id'] ) ? intval( wp_unslash( $_POST['pne_pdf_id'] ) ) : 0;
@@ -195,9 +198,11 @@ add_action( 'save_post', function ( $post_id ) {
     update_post_meta( $post_id, 'pne_test_emails', $test_emails );
     update_post_meta( $post_id, 'pne_view_url', $view_url );
 
-    // If date changed, reset processed flag and test campaign
-    delete_post_meta( $post_id, 'pne_news_processed' );
-    delete_post_meta( $post_id, 'pne_news_test_campaign_id' );
+    // If the sending date changed, reset processed flag and test campaign
+    if ( $old_date !== $date ) {
+        delete_post_meta( $post_id, 'pne_news_processed' );
+        delete_post_meta( $post_id, 'pne_news_test_campaign_id' );
+    }
 }, 10, 1 );
 
 /**
@@ -232,15 +237,15 @@ add_action( 'admin_post_pne_send_test', function () {
     $message = '<div style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.4;padding:16px;">';
     $message .= '<h1 style="font-size:20px;color:#111;margin:0 0 12px;">' . esc_html( $s ) . '</h1>';
     if ( $png_url ) {
-        $message .= '<div style="text-align:center;margin:18px 0;"><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $s ) . '" style="width:100%;max-width:600px;height:auto;border-radius:4px;"></div>';
+        $message .= '<div style="text-align:center;margin:18px 0;"><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $s ) . '" style="width:100%;max-width:600px;height:auto;border-radius:[...]';
     }
     $message .= '<p style="text-align:center;margin:20px 0;">';
     if ( $pdf_url ) {
-        $message .= '<a href="' . esc_url( $pdf_url ) . '" style="display:inline-block;padding:12px 20px;background:#1e73be;color:#fff;text-decoration:none;border-radius:4px;margin-right:8px;">' . esc_html__( 'Download PDF', 'pne' ) . '</a>';
+        $message .= '<a href="' . esc_url( $pdf_url ) . '" style="display:inline-block;padding:12px 20px;background:#1e73be;color:#fff;text-decoration:none;border-radius:4px;margin-right:8px;[...]";
     }
-    $message .= '<a href="' . esc_url( $view_url ) . '" style="display:inline-block;padding:12px 20px;background:#6ab04c;color:#fff;text-decoration:none;border-radius:4px;">' . esc_html__( 'View Online', 'pne' ) . '</a>';
+    $message .= '<a href="' . esc_url( $view_url ) . '" style="display:inline-block;padding:12px 20px;background:#6ab04c;color:#fff;text-decoration:none;border-radius:4px;">' . esc_html__( 'View [...]', 'pne' ) . '</a>';
     $message .= '</p>';
-    $message .= '<p style="color:#666;font-size:13px;text-align:center;margin-top:8px;">' . esc_html__( 'If you cannot click the buttons, copy and paste the links in your browser.', 'pne' ) . '</p>';
+    $message .= '<p style="color:#666;font-size:13px;text-align:center;margin-top:8px;">' . esc_html__( 'If you cannot click the buttons, copy and paste the links in your browser.', 'pne' ) . '</[...];
     $message .= '</div>';
 
     global $wpdb;
@@ -393,15 +398,15 @@ add_action( 'pne_process_news', function () {
         $message = '<div style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.4;padding:16px;">';
         $message .= '<h1 style="font-size:20px;color:#111;margin:0 0 12px;">' . esc_html( $s ) . '</h1>';
         if ( $png_url ) {
-            $message .= '<div style="text-align:center;margin:18px 0;"><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $s ) . '" style="width:100%;max-width:600px;height:auto;border-radius:4px;"></div>';
+            $message .= '<div style="text-align:center;margin:18px 0;"><img src="' . esc_url( $png_url ) . '" alt="' . esc_attr( $s ) . '" style="width:100%;max-width:600px;height:auto;border-rad[...]';
         }
         $message .= '<p style="text-align:center;margin:20px 0;">';
         if ( $pdf_url ) {
-            $message .= '<a href="' . esc_url( $pdf_url ) . '" style="display:inline-block;padding:12px 20px;background:#1e73be;color:#fff;text-decoration:none;border-radius:4px;margin-right:8px;">' . esc_html__( 'Download PDF', 'pne' ) . '</a>';
+            $message .= '<a href="' . esc_url( $pdf_url ) . '" style="display:inline-block;padding:12px 20px;background:#1e73be;color:#fff;text-decoration:none;border-radius:4px;margin-right:8px;[...]");
         }
-        $message .= '<a href="' . esc_url( $view_url ) . '" style="display:inline-block;padding:12px 20px;background:#6ab04c;color:#fff;text-decoration:none;border-radius:4px;">' . esc_html__( 'View Online', 'pne' ) . '</a>';
+        $message .= '<a href="' . esc_url( $view_url ) . '" style="display:inline-block;padding:12px 20px;background:#6ab04c;color:#fff;text-decoration:none;border-radius:4px;">' . esc_html__( 'V[...]', 'pne' ) . '</a>';
         $message .= '</p>';
-        $message .= '<p style="color:#666;font-size:13px;text-align:center;margin-top:8px;">' . esc_html__( 'If you cannot click the buttons, copy and paste the links in your browser.', 'pne' ) . '</p>';
+        $message .= '<p style="color:#666;font-size:13px;text-align:center;margin-top:8px;">' . esc_html__( 'If you cannot click the buttons, copy and paste the links in your browser.', 'pne' ) . '[...];
         $message .= '</div>';
 
         global $wpdb;
