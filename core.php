@@ -133,7 +133,7 @@ add_action( 'add_meta_boxes', function () {
             } else {
                 echo '<span class="dashicons dashicons-yes"></span> ' . esc_html__( 'Test sent', 'pne' );
                 $promote_url = wp_nonce_url( admin_url( 'admin-post.php?action=pne_promote_campaign&post_id=' . $post->ID ), 'pne_promote_' . $post->ID );
-                echo ' <a href="' . esc_url( $promote_url ) . '" class="button">' . esc_html__( 'Promote to full send', 'pne' ) . '</a>';
+                echo ' <a href="' . esc_url( $promote_url ) . '" class="button button-primary">' . esc_html__( 'Promote to full send', 'pne' ) . '</a>';
             }
             ?>
         </p>
@@ -146,6 +146,10 @@ add_action( 'add_meta_boxes', function () {
  */
 add_action( 'save_post', function ( $post_id ) {
     if ( get_post_type( $post_id ) !== 'pne_news' ) {
+        return;
+    }
+    // Skip saving if we're promoting campaign (prevent field reset)
+    if ( isset( $_GET['promoting'] ) && $_GET['promoting'] === '1' ) {
         return;
     }
     if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) return;
@@ -297,7 +301,8 @@ add_action( 'admin_post_pne_promote_campaign', function () {
     update_post_meta( $post_id, 'pne_news_processed', 1 );
     update_post_meta( $post_id, 'pne_news_campaign_id', $test_cid );
 
-    wp_redirect( admin_url( 'post.php?post=' . $post_id . '&action=edit&promoted=1' ) );
+    // Set flag to prevent save_post from clearing fields, then redirect
+    wp_redirect( admin_url( 'post.php?post=' . $post_id . '&action=edit&promoted=1&promoting=1' ) );
     exit;
 } );
 
